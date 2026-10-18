@@ -44,8 +44,9 @@ type Message struct {
 // Output is what an agent step produced on the latest run. It is owned by the
 // server: clients cannot overwrite it when they save a workflow.
 type Output struct {
-	Text      string `json:"text"`
-	Simulated bool   `json:"simulated"`
+	Text      string   `json:"text"`
+	Simulated bool     `json:"simulated"`
+	Used      []string `json:"used,omitempty"` // tools the agent called on this run
 }
 
 // Workflow is one flow of steps with its own run state and chat.

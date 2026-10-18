@@ -22,7 +22,20 @@ type Config struct {
 	CookieSecure bool
 	TrustProxy   bool
 	AllowSignup  bool
+	PublicURL    string // where browsers reach this app; OAuth callbacks are built from it
+	GitHub       GitHubConfig
 }
+
+// GitHubConfig describes the GitHub OAuth app. Leave ClientID empty to turn the integration off.
+type GitHubConfig struct {
+	ClientID     string
+	ClientSecret string
+	Scopes       string
+	OAuthURL     string // https://github.com
+	APIURL       string // https://api.github.com
+}
+
+func (g GitHubConfig) Enabled() bool { return g.ClientID != "" && g.ClientSecret != "" }
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -54,6 +67,14 @@ func LoadConfig() (Config, error) {
 		TrustProxy:   envBool("TRUST_PROXY", false),
 		AllowSignup:  envBool("ALLOW_SIGNUP", true),
 		DBMaxConns:   20,
+		PublicURL:    strings.TrimRight(envOr("PUBLIC_URL", "http://localhost:"+envOr("PORT", "8080")), "/"),
+		GitHub: GitHubConfig{
+			ClientID:     os.Getenv("GITHUB_CLIENT_ID"),
+			ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
+			Scopes:       envOr("GITHUB_SCOPES", "public_repo read:user"),
+			OAuthURL:     strings.TrimRight(envOr("GITHUB_OAUTH_URL", "https://github.com"), "/"),
+			APIURL:       strings.TrimRight(envOr("GITHUB_API_URL", "https://api.github.com"), "/"),
+		},
 	}
 	if c.DatabaseURL == "" {
 		return c, errors.New("DATABASE_URL is required, e.g. postgres://user:pass@localhost:5432/agentworkflow?sslmode=disable")

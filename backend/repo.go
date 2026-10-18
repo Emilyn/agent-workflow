@@ -717,3 +717,35 @@ func isDBError(err error) bool {
 	var pe *pq.Error
 	return errors.As(err, &pe) || errors.Is(err, sql.ErrConnDone) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
+
+// ---------- connected tools (OAuth tokens, encrypted) ----------
+
+type IntegrationInfo struct {
+	Account     string `json:"account"`
+	Scopes      string `json:"scopes"`
+	ConnectedAt string `json:"connectedAt"`
+}
+
+func (r *Repo) SetIntegration(ctx context.Context, wsID, provider, userID, account, scopes string, enc []byte) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO integration_tokens (workspace_id, provider, token_enc, account, scopes, connected_by) VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (workspace_id, provider) DO UPDATE SET token_enc = EXCLUDED.token_enc, account = EXCLUDED.account, scopes = EXCLUDED.scopes,
+		connected_by = EXCLUDED.connected_by, created_at = now()`, wsID, provider, enc, account, scopes, userID)
+	return err
+}
+
+// Integration returns what is stored for a provider; enc is nil when it is not connected.
+func (r *Repo) Integration(ctx context.Context, wsID, provider string) (info IntegrationInfo, enc []byte, err error) {
+	var t time.Time
+	err = r.db.QueryRowContext(ctx, `SELECT token_enc, account, scopes, created_at FROM integration_tokens WHERE workspace_id = $1 AND provider = $2`, wsID, provider).
+		Scan(&enc, &info.Account, &info.Scopes, &t)
+	if errors.Is(err, sql.ErrNoRows) {
+		return info, nil, nil
+	}
+	info.ConnectedAt = t.UTC().Format(rfc)
+	return info, enc, err
+}
+
+func (r *Repo) DeleteIntegration(ctx context.Context, wsID, provider string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM integration_tokens WHERE workspace_id = $1 AND provider = $2`, wsID, provider)
+	return err
+}

@@ -59,6 +59,9 @@ export const api = {
   claudeStatus: (ws) => request('GET', `${w(ws)}/claude`),
   connectClaude: (ws, apiKey) => request('PUT', `${w(ws)}/claude/key`, { apiKey }),
   disconnectClaude: (ws) => request('DELETE', `${w(ws)}/claude/key`),
+  integrations: (ws) => request('GET', `${w(ws)}/integrations`),
+  githubStart: (ws) => request('POST', `${w(ws)}/integrations/github/start`, {}),
+  githubDisconnect: (ws) => request('DELETE', `${w(ws)}/integrations/github`),
   getSettings: (ws) => request('GET', `${w(ws)}/settings`),
   saveSettings: (ws, s) => request('PUT', `${w(ws)}/settings`, s),
 

@@ -44,6 +44,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [claude, setClaude] = useState(null);
+  const [github, setGithub] = useState(null);
 
   const dirty = useRef(false);
   const settingsDirty = useRef(false);
@@ -59,7 +60,16 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   busyRef.current = busy || !!thinking;
 
   // Components read one combined object: the workflow, the shared settings and the people.
-  const view = useMemo(() => (doc && settings ? { ...doc, ...settings, members } : null), [doc, settings, members]);
+  // A real GitHub connection makes the GitHub tool available, whatever the placeholder flags say.
+  const view = useMemo(() => {
+    if (!doc || !settings) return null;
+    const live = !!github?.connected;
+    return {
+      ...doc, ...settings, members,
+      gitProvider: live ? 'github' : settings.gitProvider,
+      connected: { ...settings.connected, git: settings.connected.git || live },
+    };
+  }, [doc, settings, members, github]);
 
   // ---------- loading ----------
   const show = useCallback((wf, { keepSelection = false, notice = '', replace = false } = {}) => {
@@ -129,12 +139,13 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     let cancelled = false;
     (async () => {
       try {
-        const [l, st, m, c] = await Promise.all([api.listWorkflows(wsId), api.getSettings(wsId), api.members(wsId), api.claudeStatus(wsId)]);
+        const [l, st, m, c, ints] = await Promise.all([api.listWorkflows(wsId), api.getSettings(wsId), api.members(wsId), api.claudeStatus(wsId), api.integrations(wsId)]);
         if (cancelled) return;
         setList(l);
         setSettings(st);
         setMembers(m);
         setClaude(c);
+        setGithub(ints.github);
         const id = l.find((x) => x.id === wfFromUrl)?.id || l[0].id;
         const wf = await api.getWorkflow(wsId, id);
         if (!cancelled) show(wf, { replace: true });
@@ -145,6 +156,27 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId]);
+
+  // Coming back from GitHub: ?github=connected or ?github=error&reason=...
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const result = q.get('github');
+    if (!result) return;
+    const reasons = {
+      denied: 'GitHub access was not granted.',
+      expired: 'The GitHub sign-in took too long. Try again.',
+      state: 'The GitHub sign-in could not be verified. Try again from this browser.',
+      session: 'You were signed out while connecting GitHub. Sign in and try again.',
+      forbidden: 'Only workspace admins can connect GitHub.',
+      exchange: 'GitHub did not accept the sign-in. Try again.',
+    };
+    const reason = q.get('reason');
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+    setTab('integrations');
+    if (result === 'connected') api.integrations(wsId).then((r) => setGithub(r.github)).catch(() => {});
+    else setError(reasons[reason] || 'Could not connect GitHub.');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Back/forward and edited links switch workflows.
   const openRef = useRef(openWorkflow);
@@ -348,6 +380,16 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     note('Claude is connected with the workspace’s API key. Agent steps and replies now run for real.');
   };
 
+  const connectGithub = async () => {
+    const { url } = await api.githubStart(wsId); // GitHub asks for consent, then sends the browser back here
+    window.location.href = url;
+  };
+
+  const disconnectGithub = async () => {
+    const r = await api.githubDisconnect(wsId);
+    setGithub(r.github);
+  };
+
   const disconnectClaude = async () => {
     setClaude(await api.disconnectClaude(wsId));
   };
@@ -532,6 +574,9 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
             canManage,
             onConnectClaude: connectClaude,
             onDisconnectClaude: disconnectClaude,
+            github,
+            onConnectGithub: connectGithub,
+            onDisconnectGithub: disconnectGithub,
             onProvider: (p) => updateSettings((st) => ({ ...st, gitProvider: p })),
             onToggle: toggleIntegration,
           }}

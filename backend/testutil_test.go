@@ -46,6 +46,7 @@ type envOpts struct {
 	anthropicURL string
 	serverKey    string
 	allowSignup  *bool
+	githubURL    string // fake GitHub serving both OAuth and API
 }
 
 func newEnv(t *testing.T, o ...envOpts) *env {
@@ -84,6 +85,10 @@ func newEnv(t *testing.T, o ...envOpts) *env {
 	}
 	if opt.anthropicURL == "" {
 		cfg.AnthropicURL = "http://127.0.0.1:1"
+	}
+	if opt.githubURL != "" {
+		cfg.PublicURL = "http://app.test"
+		cfg.GitHub = GitHubConfig{ClientID: "cid", ClientSecret: "csecret", Scopes: "public_repo read:user", OAuthURL: opt.githubURL, APIURL: opt.githubURL}
 	}
 	if opt.allowSignup != nil {
 		cfg.AllowSignup = *opt.allowSignup

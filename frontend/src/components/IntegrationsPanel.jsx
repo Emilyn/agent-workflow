@@ -1,18 +1,20 @@
 import { INTEGRATIONS, integrationName } from '../workflow.js';
 import ClaudeCard from './ClaudeCard.jsx';
+import GitHubCard from './GitHubCard.jsx';
 import { INTEGRATION_ICON } from './Icons.jsx';
 
-export default function IntegrationsPanel({ doc, claude, canManage, onConnectClaude, onDisconnectClaude, onProvider, onToggle }) {
+export default function IntegrationsPanel({ doc, claude, github, canManage, onConnectClaude, onDisconnectClaude, onConnectGithub, onDisconnectGithub, onProvider, onToggle }) {
   return (
     <div className="panel">
       <div className="col g6">
         <span className="serif" style={{ fontSize: 28 }}>Connect your tools</span>
         <span style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--ink-2)' }}>
-          Claude is real: connect an API key and agents run on it. GitHub, GitLab, Jira and Figma below are placeholders for now; no real account is linked. These settings are shared by everyone in the workspace.
+          Claude and GitHub are real: connect an API key and agents run on it, connect GitHub and agents can read your repositories. GitLab, Jira and Figma are placeholders for now; no real account is linked. These settings are shared by everyone in the workspace.
         </span>
       </div>
       <ClaudeCard claude={claude} canManage={canManage} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} />
-      {['git', 'jira', 'figma'].map((key) => {
+      <GitHubCard github={github} canManage={canManage} onConnect={onConnectGithub} onDisconnect={onDisconnectGithub} />
+      {['git', 'jira', 'figma'].filter((k) => k !== 'git' || doc.gitProvider === 'gitlab' || !github?.configured).map((key) => {
         const it = INTEGRATIONS[key];
         const on = doc.connected[key];
         const name = integrationName(doc, key);

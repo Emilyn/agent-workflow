@@ -25,7 +25,7 @@ export default function SettingsPanel({ doc, node, onEdit, onRemove, onDiscuss }
             <div className="row wrap g8">
               {node.tools.length ? node.tools.map((t) => <span key={t} className="tag-chip">{t}</span>) : <span className="small muted">No tools selected.</span>}
             </div>
-            <span className="small muted">Tools are recorded with the agent. In this version agents work from the text they are given and do not call them.</span>
+            <span className="small muted">The GitHub tool is live: when GitHub is connected, this agent can read repositories, issues and pull requests while it runs. Other tools are recorded but not called yet.</span>
           </div>
           <div className="row box" style={{ justifyContent: 'space-between' }}>
             <span>Model</span><strong>{node.who}</strong>
@@ -35,6 +35,7 @@ export default function SettingsPanel({ doc, node, onEdit, onRemove, onDiscuss }
               <span className="lbl">Latest output</span>
               {output?.simulated && <span className="tag">Simulated</span>}
             </div>
+            {output?.used?.length > 0 && <span className="small muted">Used: {output.used.map((u) => u.replace(/^github_/, '').replace(/_/g, ' ')).join(', ')}</span>}
             {output ? <div className="output">{output.text}</div> : <span className="small muted">Nothing yet. Run the workflow to see what this agent produces.</span>}
           </div>
         </>

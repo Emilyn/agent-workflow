@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -370,7 +371,8 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	}
 	var n int
 	_ = e.db.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&n)
-	if n != 1 {
-		t.Errorf("%d migrations recorded", n)
+	files, _ := os.ReadDir("migrations")
+	if n != len(files) {
+		t.Errorf("%d migrations recorded, want %d", n, len(files))
 	}
 }
