@@ -36,11 +36,25 @@ npm run dev                           # http://localhost:5173, proxies /api to :
 
 Production style, one process: `cd frontend && npm install && npm run build`, then `cd ../backend && go run .` and open http://localhost:8080. The Go server serves the built frontend.
 
+### Connecting Claude
+
+Open **Integrations** and paste an Anthropic API key from the [Claude Console](https://platform.claude.com/). The server checks it with Anthropic, stores it, and agent steps and chat replies then run on Claude, billed to that key's owner. Until a key is connected everything is clearly marked simulated.
+
+**Why not "sign in with Claude Pro"?** A Claude Pro or Max plan covers Claude.ai and is billed separately from the API. Anthropic's terms also don't allow third-party apps to offer Claude.ai login or to use Free, Pro or Max credentials on behalf of users, or to collect or store Claude.ai credentials ([Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [why the API is billed separately](https://support.claude.com/en/articles/9876003-i-have-a-paid-claude-subscription-pro-max-team-or-enterprise-plans-why-do-i-have-to-pay-separately-to-use-the-claude-api-and-console)). So the app only accepts API keys, and it refuses subscription tokens (`sk-ant-oat…`).
+
+How the key is handled:
+
+- It goes from the browser to your Go server only, and is never sent back. The app shows just the last four characters.
+- It is saved in `data/credentials.json` (mode `0600`) as plain text, so keep that folder private. A key set through `ANTHROPIC_API_KEY` is used instead and can't be changed in the app.
+- Use HTTPS if the server is not on `localhost`, so the key isn't sent in clear text.
+- There is one key per server, shared by everyone who opens it. Per-user keys need user accounts first.
+
 ### Configuration (environment variables, backend)
 
 | Variable | Default | |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | unset | Without it, agent steps and chat replies are clearly marked simulated. |
+| `ANTHROPIC_API_KEY` | unset | Optional. Sets the key at startup instead of connecting one in the app. |
+| `CREDENTIALS_FILE` | `data/credentials.json` | Where a key connected in the app is stored. |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model used for every agent step and chat reply. |
 | `PORT` | `8080` | |
 | `DATA_FILE` | `data/state.json` | Where the workflow is stored. |
@@ -54,7 +68,10 @@ Production style, one process: `cd frontend && npm install && npm run build`, th
 | `POST /api/run/step` `{stepId}` | Run one agent step. Its prompt is the step's instructions plus the nearest earlier outputs. |
 | `POST /api/run/reset` | Clear outputs and start the run over. |
 | `POST /api/chat` `{agentName, instruction, message}` | Reply as the mentioned agent, or as Claude. |
-| `GET /api/health` | Whether a Claude key is configured. |
+| `GET /api/claude` | Whether Claude is connected, where the key came from and its last four characters. |
+| `PUT /api/claude/key` `{apiKey}` | Check a key with Anthropic and store it. Rejects bad formats and subscription tokens. |
+| `DELETE /api/claude/key` | Disconnect and delete the stored key. |
+| `GET /api/health` | Liveness and whether a key is configured. |
 
 ## Tests
 
@@ -66,7 +83,7 @@ The Go tests cover the API and run steps against a fake Anthropic server, includ
 
 ## What is real and what is a placeholder
 
-- **Real:** the Go API, saving, running agent steps through Claude (with a key), agent chat replies, and chat notes changing agent instructions.
+- **Real:** the Go API, saving, connecting an API key, running agent steps through Claude, agent chat replies, and chat notes changing agent instructions. Tested against a fake Anthropic server, not a live key.
 - **Placeholder, Integrations:** "Connect" only toggles a flag. Nothing signs in to GitHub, GitLab, Jira or Figma, and agents cannot use those tools. Real connections need OAuth and a secure place on the server to keep tokens.
 - **Placeholder, tools on an agent:** they are recorded but not called. Agents work from the text they are given.
 - **Not built yet:** Branch, Parallel and Wait steps; sign-in and per-user workspaces; live sync between teammates (today there is one shared workflow per server).

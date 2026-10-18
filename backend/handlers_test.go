@@ -20,7 +20,7 @@ func newTestServer(t *testing.T, claude *Claude) (*Server, http.Handler) {
 	if claude == nil {
 		claude = &Claude{Model: "test-model", HTTP: http.DefaultClient}
 	}
-	srv := &Server{store: store, claude: claude}
+	srv := &Server{store: store, claude: claude, credsPath: filepath.Join(t.TempDir(), "credentials.json")}
 	return srv, srv.Routes(t.TempDir())
 }
 

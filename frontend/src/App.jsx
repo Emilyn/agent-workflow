@@ -33,7 +33,7 @@ export default function App() {
   const [saveState, setSaveState] = useState('saved');
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
-  const [health, setHealth] = useState(null);
+  const [claude, setClaude] = useState(null);
   const dirty = useRef(false);
 
   // Load the workflow from the Go API.
@@ -44,7 +44,7 @@ export default function App() {
         setSelected(d.steps[0][0].id);
       })
       .catch((e) => setLoadError(e.message));
-    api.health().then(setHealth).catch(() => {});
+    api.claudeStatus().then(setClaude).catch(() => {});
   }, []);
 
   // Every change goes through update() so it gets saved after a short pause.
@@ -166,6 +166,16 @@ export default function App() {
         : next;
     });
 
+  const connectClaude = async (apiKey) => {
+    const status = await api.connectClaude(apiKey); // throws with a readable message if rejected
+    setClaude(status);
+    update((d) => addMessage(d, 'Claude', 'agent', 'Claude is connected with your API key. Agent steps and replies now run for real.'));
+  };
+
+  const disconnectClaude = async () => {
+    setClaude(await api.disconnectClaude());
+  };
+
   // ---------- running ----------
   const flush = async () => {
     if (dirty.current) {
@@ -256,9 +266,10 @@ export default function App() {
           <button type="button" className="link-btn" onClick={() => setError('')}>Dismiss</button>
         </div>
       )}
-      {health && !health.claude && (
+      {claude && !claude.connected && (
         <div className="banner info">
-          Claude is not connected, so agent steps and replies are simulated. Set <code>ANTHROPIC_API_KEY</code> on the server to run them for real.
+          <span>Claude is not connected, so agent steps and replies are simulated.</span>
+          <button type="button" className="link-btn" onClick={() => setTab('integrations')}>Connect Claude</button>
         </div>
       )}
       <div className="body">
@@ -279,6 +290,9 @@ export default function App() {
             },
           }}
           integrations={{
+            claude,
+            onConnectClaude: connectClaude,
+            onDisconnectClaude: disconnectClaude,
             onProvider: (p) => update((d) => ({ ...d, gitProvider: p })),
             onToggle: toggleIntegration,
           }}

@@ -13,13 +13,18 @@ import (
 )
 
 type Server struct {
-	store  *Store
-	claude *Claude
+	store     *Store
+	claude    *Claude
+	credsPath string // where a user-connected API key is stored
+	envKey    bool   // true when the key comes from ANTHROPIC_API_KEY and cannot be changed in the app
 }
 
 func (s *Server) Routes(staticDir string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
+	mux.HandleFunc("GET /api/claude", s.getClaude)
+	mux.HandleFunc("PUT /api/claude/key", s.putClaudeKey)
+	mux.HandleFunc("DELETE /api/claude/key", s.deleteClaudeKey)
 	mux.HandleFunc("GET /api/state", s.getState)
 	mux.HandleFunc("PUT /api/state", s.putState)
 	mux.HandleFunc("POST /api/run/step", s.runStep)
@@ -181,7 +186,7 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	system, user := stepPrompts(st, n, previousInput(st, row))
-	fallback := fmt.Sprintf("Simulated output. Set ANTHROPIC_API_KEY on the server to run %s with Claude.\n\nIt would follow: %s", n.Title, n.Instruction)
+	fallback := fmt.Sprintf("Simulated output. Connect an Anthropic API key (Integrations tab) to run %s with Claude.\n\nIt would follow: %s", n.Title, n.Instruction)
 	text, simulated, err := s.generate(r.Context(), system, user, fallback, 1500)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -258,7 +263,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			"You are Claude, helping a team build a workflow called %q that mixes agents and people. The steps are:\n%s\n\n"+
 				"Answer the teammate in at most three plain sentences. Suggest a concrete change to the workflow when it helps. Do not use lists.",
 			st.Name, strings.Join(outline, "\n"))
-		fallback = "Noted. Set ANTHROPIC_API_KEY on the server and I will be able to answer properly."
+		fallback = "Noted. Connect an Anthropic API key in the Integrations tab and I will be able to answer properly."
 	}
 	reply, simulated, err := s.generate(r.Context(), system, req.Message, fallback, 400)
 	if err != nil {

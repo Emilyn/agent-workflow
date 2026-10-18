@@ -1,15 +1,17 @@
 import { INTEGRATIONS, integrationName } from '../workflow.js';
+import ClaudeCard from './ClaudeCard.jsx';
 import { INTEGRATION_ICON } from './Icons.jsx';
 
-export default function IntegrationsPanel({ doc, onProvider, onToggle }) {
+export default function IntegrationsPanel({ doc, claude, onConnectClaude, onDisconnectClaude, onProvider, onToggle }) {
   return (
     <div className="panel">
       <div className="col g6">
         <span className="serif" style={{ fontSize: 28 }}>Connect your tools</span>
         <span style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--ink-2)' }}>
-          Give agents access to your code, tickets and designs. This version simulates the sign-in; no real account is linked.
+          Claude is real: connect an API key and agents run on it. GitHub, GitLab, Jira and Figma below are placeholders for now; no real account is linked.
         </span>
       </div>
+      <ClaudeCard claude={claude} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} />
       {['git', 'jira', 'figma'].map((key) => {
         const it = INTEGRATIONS[key];
         const on = doc.connected[key];

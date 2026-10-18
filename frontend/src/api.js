@@ -22,6 +22,9 @@ async function request(method, path, body) {
 
 export const api = {
   health: () => request('GET', '/api/health'),
+  claudeStatus: () => request('GET', '/api/claude'),
+  connectClaude: (apiKey) => request('PUT', '/api/claude/key', { apiKey }),
+  disconnectClaude: () => request('DELETE', '/api/claude/key'),
   getState: () => request('GET', '/api/state'),
   saveState: (doc) => request('PUT', '/api/state', doc),
   runStep: (stepId) => request('POST', '/api/run/step', { stepId }),
