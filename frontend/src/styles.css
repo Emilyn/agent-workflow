@@ -93,3 +93,14 @@ label.lbl { font-size: 13px; font-weight: 600; }
 .seg button.on { border: 2px solid var(--ink); background: #fff; color: var(--ink); font-weight: 600; }
 .alert { font-size: 13px; color: var(--danger); }
 .ok { font-size: 13px; color: var(--ok-fg); }
+
+/* ---- additions for the React version ---- */
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn.add-step { border: 1.5px dashed #8E8976; background: transparent; border-radius: 24px; height: 48px; padding: 0 22px; }
+.btn.send { width: 48px; height: 48px; padding: 0; justify-content: center; flex-shrink: 0; display: inline-flex; align-items: center; }
+.banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 24px; font-size: 14px; background: var(--wait-bg); color: var(--wait-fg); }
+.banner.info { background: var(--paper-2); color: var(--ink-2); border-bottom: 1px solid var(--line); justify-content: flex-start; }
+.link-btn { background: none; border: none; color: inherit; text-decoration: underline; font-size: 14px; min-height: 44px; padding: 0 8px; }
+.output { white-space: pre-wrap; font-size: 14px; line-height: 1.5; padding: 12px 14px; border-radius: 12px; border: 1px solid #D9D5C7; background: var(--paper); max-height: 320px; overflow-y: auto; }
+.splash { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: var(--chip); padding: 1px 6px; border-radius: 6px; }

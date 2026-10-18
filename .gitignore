@@ -1,0 +1,8 @@
+node_modules/
+frontend/dist/
+backend/data/
+backend/agentworkflow
+.yarn/
+.pnp.*
+*.log
+.env
