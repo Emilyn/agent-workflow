@@ -104,3 +104,24 @@ label.lbl { font-size: 13px; font-weight: 600; }
 .output { white-space: pre-wrap; font-size: 14px; line-height: 1.5; padding: 12px 14px; border-radius: 12px; border: 1px solid #D9D5C7; background: var(--paper); max-height: 320px; overflow-y: auto; }
 .splash { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: var(--chip); padding: 1px 6px; border-radius: 6px; }
+
+/* workflow switcher */
+.switcher { position: relative; min-width: 0; }
+.switch-btn { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 44px; padding: 0 10px; margin-left: -10px; background: transparent; border: 1px solid transparent; border-radius: 12px; text-align: left; }
+.switch-btn:hover:not(:disabled) { background: var(--paper-2); border-color: var(--line); }
+.switch-btn:focus-visible { outline: 3px solid #7A9CC6; outline-offset: 2px; }
+.switch-btn:disabled { cursor: not-allowed; }
+.switch-btn .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caret { font-size: 14px; color: var(--muted); }
+.menu { position: absolute; z-index: 20; top: calc(100% + 6px); left: -10px; width: min(380px, calc(100vw - 32px)); background: var(--card); border: 1px solid var(--line-2); border-radius: 16px; padding: 16px; box-shadow: 0 12px 32px rgba(20, 20, 19, 0.14); }
+.menu-head { margin-bottom: 8px; }
+.wf-list { list-style: none; margin: 0 0 12px; padding: 0; max-height: 280px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.wf-item { width: 100%; min-height: 56px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding: 8px 12px; text-align: left; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; }
+.wf-item.on { border-color: var(--accent); background: #FBF1EC; }
+.wf-item:focus-visible { outline: 3px solid #7A9CC6; outline-offset: 2px; }
+.wf-name { font-weight: 600; font-size: 15px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.menu-err { margin-top: 12px; color: var(--danger); }
+.tpl { border: 0; padding: 0; margin: 0; }
+.tpl-opt { min-height: 44px; }
+.tpl-opt input { width: 20px; height: 20px; accent-color: var(--accent); }

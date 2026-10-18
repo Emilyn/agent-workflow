@@ -58,7 +58,7 @@ export default function SettingsPanel({ doc, node, onEdit, onRemove, onDiscuss }
 
       {node.kind === 'trigger' && (
         <div className="row box" style={{ justifyContent: 'space-between' }}>
-          <span>Repeats</span><strong>Weekly, Monday 9:00</strong>
+          <span>Starts</span><strong>{node.title}</strong>
         </div>
       )}
 

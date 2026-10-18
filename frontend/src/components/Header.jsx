@@ -1,14 +1,15 @@
 import { Play, Spark } from './Icons.jsx';
+import Switcher from './Switcher.jsx';
 
 const SAVE_LABEL = { saved: 'Saved', saving: 'Saving…', error: 'Not saved' };
 
-export default function Header({ name, saveState, runLabel, busy, onAdvance }) {
+export default function Header({ current, switcher, saveState, runLabel, busy, onAdvance }) {
   return (
     <header className="topbar">
       <div className="row g12" style={{ minWidth: 0 }}>
         <div className="logo"><Spark size={20} /></div>
         <div className="col" style={{ minWidth: 0 }}>
-          <span className="serif title">{name}</span>
+          <Switcher current={current} disabled={busy} {...switcher} />
           <span className="small muted">Workflows · {SAVE_LABEL[saveState]}</span>
         </div>
       </div>

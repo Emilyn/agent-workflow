@@ -56,7 +56,7 @@ func TestConnectKeyStoresItPrivatelyAndEnablesClaude(t *testing.T) {
 	}
 
 	// The key never leaves the server.
-	for _, path := range []string{"/api/claude", "/api/state", "/api/health"} {
+	for _, path := range []string{"/api/claude", "/api/workspace", "/api/workflows", "/api/health"} {
 		if body := do(t, h, "GET", path, nil).Body.String(); strings.Contains(body, validKey) {
 			t.Errorf("%s leaks the key", path)
 		}
@@ -77,7 +77,7 @@ func TestConnectKeyStoresItPrivatelyAndEnablesClaude(t *testing.T) {
 	}
 
 	// Agent steps now call Claude for real.
-	run := do(t, h, "POST", "/api/run/step", map[string]string{"stepId": "n2"})
+	run := do(t, h, "POST", "/api/workflows/"+firstID(srv)+"/run/step", map[string]string{"stepId": "n2"})
 	var out runResponse
 	_ = json.Unmarshal(run.Body.Bytes(), &out)
 	if run.Code != 200 || out.Simulated || out.Text != "real reply" {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
 import Canvas from './components/Canvas.jsx';
 import Header from './components/Header.jsx';
@@ -21,8 +21,15 @@ import {
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const hashId = () => {
+  const m = window.location.hash.match(/^#\/w\/([\w-]+)$/);
+  return m ? m[1] : '';
+};
+
 export default function App() {
-  const [doc, setDoc] = useState(null);
+  const [doc, setDoc] = useState(null); // the open workflow
+  const [ws, setWs] = useState(null); // shared by every workflow: custom agents, integrations
+  const [list, setList] = useState([]);
   const [selected, setSelected] = useState(null);
   const [tab, setTab] = useState('chat');
   const [form, setForm] = useState(blankForm());
@@ -35,22 +42,77 @@ export default function App() {
   const [loadError, setLoadError] = useState('');
   const [claude, setClaude] = useState(null);
   const dirty = useRef(false);
+  const wsDirty = useRef(false);
+  const docRef = useRef(null);
+  const wsRef = useRef(null);
+  docRef.current = doc;
+  wsRef.current = ws;
 
-  // Load the workflow from the Go API.
+  // Components read one combined object: the workflow plus the shared workspace.
+  const view = useMemo(() => (doc && ws ? { ...doc, ...ws } : null), [doc, ws]);
+
+  const show = useCallback((wf) => {
+    dirty.current = false;
+    setDoc(wf);
+    setSelected(wf.steps[0][0].id);
+    setDraft('');
+    setError('');
+    if (hashId() !== wf.id) window.location.hash = `#/w/${wf.id}`;
+  }, []);
+
+  // Save anything pending (used before switching, copying and running).
+  const flush = useCallback(async () => {
+    if (dirty.current && docRef.current) {
+      dirty.current = false;
+      await api.saveWorkflow(docRef.current.id, docRef.current);
+    }
+    if (wsDirty.current && wsRef.current) {
+      wsDirty.current = false;
+      await api.saveWorkspace(wsRef.current);
+    }
+    setSaveState('saved');
+  }, []);
+
+  const openWorkflow = useCallback(async (id) => {
+    await flush();
+    show(await api.getWorkflow(id));
+  }, [flush, show]);
+
+  // Load the workspace and the workflow named in the URL (or the first one).
   useEffect(() => {
-    api.getState()
-      .then((d) => {
-        setDoc(d);
-        setSelected(d.steps[0][0].id);
+    Promise.all([api.listWorkflows(), api.getWorkspace()])
+      .then(async ([l, w]) => {
+        setList(l);
+        setWs(w);
+        const id = l.find((x) => x.id === hashId())?.id || l[0].id;
+        show(await api.getWorkflow(id));
       })
       .catch((e) => setLoadError(e.message));
     api.claudeStatus().then(setClaude).catch(() => {});
+  }, [show]);
+
+  // Back/forward and edited links switch workflows too.
+  const openRef = useRef(openWorkflow);
+  openRef.current = openWorkflow;
+  useEffect(() => {
+    const onHash = () => {
+      const id = hashId();
+      if (id && docRef.current && id !== docRef.current.id) {
+        openRef.current(id).catch((e) => setError(`Could not open that workflow: ${e.message}`));
+      }
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Every change goes through update() so it gets saved after a short pause.
+  // Every change goes through update() / updateWs() so it gets saved after a short pause.
   const update = useCallback((fn) => {
     dirty.current = true;
     setDoc(fn);
+  }, []);
+  const updateWs = useCallback((fn) => {
+    wsDirty.current = true;
+    setWs(fn);
   }, []);
 
   useEffect(() => {
@@ -58,7 +120,7 @@ export default function App() {
     setSaveState('saving');
     const timer = setTimeout(() => {
       dirty.current = false;
-      api.saveState(doc)
+      api.saveWorkflow(doc.id, doc)
         .then(() => setSaveState('saved'))
         .catch((e) => {
           setSaveState('error');
@@ -68,16 +130,31 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [doc]);
 
+  useEffect(() => {
+    if (!ws || !wsDirty.current) return undefined;
+    setSaveState('saving');
+    const timer = setTimeout(() => {
+      wsDirty.current = false;
+      api.saveWorkspace(ws)
+        .then(() => setSaveState('saved'))
+        .catch((e) => {
+          setSaveState('error');
+          setError(`Could not save: ${e.message}`);
+        });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [ws]);
+
   if (loadError) {
     return (
       <div className="splash">
-        <span className="serif" style={{ fontSize: 28 }}>Cannot load the workflow</span>
+        <span className="serif" style={{ fontSize: 28 }}>Cannot load your workflows</span>
         <span>{loadError}</span>
         <span className="muted small">Start the Go backend with <code>go run .</code> in <code>backend/</code>, then reload.</span>
       </div>
     );
   }
-  if (!doc) return <div className="splash"><span className="muted">Loading…</span></div>;
+  if (!doc || !ws) return <div className="splash"><span className="muted">Loading…</span></div>;
 
   const node = findNode(doc.steps, selected) || doc.steps[0][0];
   const { done, waiting } = runSummary(doc);
@@ -104,14 +181,14 @@ export default function App() {
   };
 
   const addAgent = (agent) => {
-    const n = agentNode(doc, agent);
+    const n = agentNode(view, agent);
     const { doc: next, idx } = insertStep(doc, selected, n);
     update(() => addMessage(next, 'Claude', 'agent', `${agent.name} is now step ${idx + 1}. It will receive the output of the step before it.`));
     select(n.id);
   };
 
   const addPerson = (step) => {
-    const n = personNode(doc, step);
+    const n = personNode(view, step);
     const { doc: next, idx } = insertStep(doc, selected, n);
     update(() => addMessage(next, 'Claude', 'agent', `${step.name} is now step ${idx + 1}, assigned to Theo. You can reassign it in Step settings.`));
     select(n.id);
@@ -137,13 +214,14 @@ export default function App() {
       model: form.model,
       mine: true,
     };
-    if (allAgents(doc).some((a) => a.name.toLowerCase() === agent.name.toLowerCase())) {
+    if (allAgents(view).some((a) => a.name.toLowerCase() === agent.name.toLowerCase())) {
       setFormError(`An agent called “${agent.name}” already exists. Pick a different name.`);
       return;
     }
-    let next = { ...doc, customAgents: [...doc.customAgents, agent] };
+    updateWs((w) => ({ ...w, customAgents: [...w.customAgents, agent] }));
+    let next = doc;
     if (addToo) {
-      const n = agentNode(next, agent);
+      const n = agentNode(view, agent);
       const placed = insertStep(next, selected, n);
       next = addMessage(placed.doc, 'Claude', 'agent', `${agent.name} is now step ${placed.idx + 1}. It will receive the output of the step before it.`);
       setSelected(n.id);
@@ -157,14 +235,14 @@ export default function App() {
     setFormError('');
   };
 
-  const toggleIntegration = (key) =>
-    update((d) => {
-      const connected = { ...d.connected, [key]: !d.connected[key] };
-      const next = { ...d, connected };
-      return connected[key]
-        ? addMessage(next, 'Claude', 'agent', `${integrationName(d, key)} is marked as connected. This is a placeholder: agents cannot reach ${integrationName(d, key)} until real sign-in is added.`)
-        : next;
-    });
+  const toggleIntegration = (key) => {
+    const on = !ws.connected[key];
+    updateWs((w) => ({ ...w, connected: { ...w.connected, [key]: on } }));
+    if (on) {
+      const name = integrationName(view, key);
+      update((d) => addMessage(d, 'Claude', 'agent', `${name} is marked as connected for all your workflows. This is a placeholder: agents cannot reach ${name} until real sign-in is added.`));
+    }
+  };
 
   const connectClaude = async (apiKey) => {
     const status = await api.connectClaude(apiKey); // throws with a readable message if rejected
@@ -177,20 +255,12 @@ export default function App() {
   };
 
   // ---------- running ----------
-  const flush = async () => {
-    if (dirty.current) {
-      dirty.current = false;
-      await api.saveState(doc);
-      setSaveState('saved');
-    }
-  };
-
   const advance = async () => {
     if (busy) return;
     setError('');
     if (done) {
       try {
-        await api.resetRun();
+        await api.resetRun(doc.id);
         update((d) => ({ ...d, progress: 0, outputs: {} }));
       } catch (e) {
         setError(e.message);
@@ -203,7 +273,7 @@ export default function App() {
       const outputs = {};
       if (agents.length) {
         await flush();
-        const results = await Promise.all(agents.map((n) => api.runStep(n.id)));
+        const results = await Promise.all(agents.map((n) => api.runStep(doc.id, n.id)));
         results.forEach((r) => {
           outputs[r.stepId] = { text: r.text, simulated: r.simulated };
         });
@@ -211,7 +281,7 @@ export default function App() {
       update((d) => ({ ...d, progress: d.progress + 1, outputs: { ...d.outputs, ...outputs } }));
     } catch (e) {
       setError(`The run paused: ${e.message}`);
-      api.getState().then((s) => update((d) => ({ ...d, outputs: s.outputs }))).catch(() => {});
+      api.getWorkflow(doc.id).then((s) => update((d) => ({ ...d, outputs: s.outputs }))).catch(() => {});
     } finally {
       setBusy(false);
     }
@@ -223,7 +293,7 @@ export default function App() {
     if (!text || thinking) return;
     setDraft('');
     const lower = text.toLowerCase();
-    const hit = allAgents(doc).find((a) => lower.includes(`@${a.name.toLowerCase()}`));
+    const hit = allAgents(view).find((a) => lower.includes(`@${a.name.toLowerCase()}`));
     const inFlow = hit && doc.steps.flat().some((n) => n.agentId === hit.id);
     let next = addMessage(doc, 'You', 'human', text);
 
@@ -248,7 +318,7 @@ export default function App() {
     const who = hit ? hit.name : 'Claude';
     setThinking(who);
     try {
-      const r = await api.chat({ agentName: hit ? hit.name : '', instruction, message: text });
+      const r = await api.chat(doc.id, { agentName: hit ? hit.name : '', instruction, message: text });
       update((d) => addMessage(d, who, 'agent', r.reply));
     } catch (e) {
       update((d) => addMessage(d, who, 'agent', `I could not reply: ${e.message}`));
@@ -259,7 +329,52 @@ export default function App() {
 
   return (
     <div className="shell">
-      <Header name={doc.name} saveState={saveState} runLabel={runLabel} busy={busy} onAdvance={advance} />
+      <Header
+        current={{ id: doc.id, name: doc.name }}
+        switcher={{
+          list,
+          disabled: busy || !!thinking,
+          onOpenMenu: async () => {
+            try {
+              await flush();
+              setList(await api.listWorkflows());
+            } catch (e) {
+              setError(e.message);
+            }
+          },
+          onOpen: openWorkflow,
+          onCreate: async (body) => {
+            await flush();
+            const wf = await api.createWorkflow(body);
+            setList(await api.listWorkflows());
+            show(wf);
+            setTab('chat');
+          },
+          onRename: async (name) => {
+            const wf = { ...docRef.current, name };
+            dirty.current = false;
+            await api.saveWorkflow(wf.id, wf);
+            setDoc(wf);
+            setList(await api.listWorkflows());
+          },
+          onDuplicate: async () => {
+            await flush();
+            const wf = await api.createWorkflow({ copyOf: doc.id });
+            setList(await api.listWorkflows());
+            show(wf);
+          },
+          onDelete: async () => {
+            dirty.current = false;
+            const rest = await api.deleteWorkflow(doc.id);
+            setList(rest);
+            show(await api.getWorkflow(rest[0].id));
+          },
+        }}
+        saveState={saveState}
+        runLabel={runLabel}
+        busy={busy}
+        onAdvance={advance}
+      />
       {error && (
         <div className="banner" role="alert">
           <span>{error}</span>
@@ -273,12 +388,12 @@ export default function App() {
         </div>
       )}
       <div className="body">
-        <Palette doc={doc} onAddAgent={addAgent} onAddPerson={addPerson} onCreateAgent={openBuilder} />
-        <Canvas doc={doc} selected={node.id} busy={busy} onSelect={select} onCreateAgent={openBuilder} />
+        <Palette doc={view} onAddAgent={addAgent} onAddPerson={addPerson} onCreateAgent={openBuilder} />
+        <Canvas doc={view} selected={node.id} busy={busy} onSelect={select} onCreateAgent={openBuilder} />
         <Side
           tab={tab}
           onTab={setTab}
-          doc={doc}
+          doc={view}
           node={node}
           chat={{ draft, thinking, onDraft: setDraft, onSend: sendMessage }}
           settings={{
@@ -293,7 +408,7 @@ export default function App() {
             claude,
             onConnectClaude: connectClaude,
             onDisconnectClaude: disconnectClaude,
-            onProvider: (p) => update((d) => ({ ...d, gitProvider: p })),
+            onProvider: (p) => updateWs((w) => ({ ...w, gitProvider: p })),
             onToggle: toggleIntegration,
           }}
           builder={{

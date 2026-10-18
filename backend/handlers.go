@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,14 +23,23 @@ type Server struct {
 func (s *Server) Routes(staticDir string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
+
 	mux.HandleFunc("GET /api/claude", s.getClaude)
 	mux.HandleFunc("PUT /api/claude/key", s.putClaudeKey)
 	mux.HandleFunc("DELETE /api/claude/key", s.deleteClaudeKey)
-	mux.HandleFunc("GET /api/state", s.getState)
-	mux.HandleFunc("PUT /api/state", s.putState)
-	mux.HandleFunc("POST /api/run/step", s.runStep)
-	mux.HandleFunc("POST /api/run/reset", s.runReset)
-	mux.HandleFunc("POST /api/chat", s.chat)
+
+	mux.HandleFunc("GET /api/workspace", s.getWorkspace)
+	mux.HandleFunc("PUT /api/workspace", s.putWorkspace)
+
+	mux.HandleFunc("GET /api/workflows", s.listWorkflows)
+	mux.HandleFunc("POST /api/workflows", s.createWorkflow)
+	mux.HandleFunc("GET /api/workflows/{id}", s.getWorkflow)
+	mux.HandleFunc("PUT /api/workflows/{id}", s.putWorkflow)
+	mux.HandleFunc("DELETE /api/workflows/{id}", s.deleteWorkflow)
+	mux.HandleFunc("POST /api/workflows/{id}/run/step", s.runStep)
+	mux.HandleFunc("POST /api/workflows/{id}/run/reset", s.runReset)
+	mux.HandleFunc("POST /api/workflows/{id}/chat", s.chat)
+
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such endpoint")
 	})
@@ -49,10 +59,21 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// storeError maps store errors to HTTP statuses.
+func storeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, errLastWorkflow):
+		writeError(w, http.StatusConflict, "Keep at least one workflow. Create another before deleting this one.")
+	default:
+		writeError(w, http.StatusBadRequest, err.Error())
+	}
+}
+
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(dst); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return false
 	}
@@ -87,34 +108,91 @@ func spa(dir string) http.Handler {
 	})
 }
 
-// ---------- state ----------
-
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "claude": s.claude.Enabled(), "model": s.claude.Model})
 }
 
-func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.store.Get())
+// ---------- workspace (shared by all workflows) ----------
+
+func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.store.Workspace())
 }
 
-func (s *Server) putState(w http.ResponseWriter, r *http.Request) {
-	var in State
+func (s *Server) putWorkspace(w http.ResponseWriter, r *http.Request) {
+	var in Workspace
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.store.Replace(in); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	out, err := s.store.SetWorkspace(in)
+	if err != nil {
+		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.store.Get())
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ---------- workflows ----------
+
+func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.store.List())
+}
+
+type createRequest struct {
+	Name     string `json:"name"`
+	Template string `json:"template"` // blank | example
+	CopyOf   string `json:"copyOf"`
+}
+
+func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
+	var req createRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	wf, err := s.store.Create(req.Name, req.Template, req.CopyOf)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, wf)
+}
+
+func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
+	wf, err := s.store.Get(r.PathValue("id"))
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, wf)
+}
+
+func (s *Server) putWorkflow(w http.ResponseWriter, r *http.Request) {
+	var in Workflow
+	if !decode(w, r, &in) {
+		return
+	}
+	wf, err := s.store.Replace(r.PathValue("id"), in)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, wf)
+}
+
+func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Delete(r.PathValue("id")); err != nil {
+		storeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.store.List())
 }
 
 func (s *Server) runReset(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.ResetOutputs(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	wf, err := s.store.ResetOutputs(r.PathValue("id"))
+	if err != nil {
+		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.store.Get())
+	writeJSON(w, http.StatusOK, wf)
 }
 
 // ---------- running a step ----------
@@ -141,11 +219,11 @@ func locate(steps [][]Node, id string) (int, *Node) {
 }
 
 // previousInput gathers the outputs of the nearest earlier row that has any.
-func previousInput(st State, row int) string {
+func previousInput(wf Workflow, row int) string {
 	for i := row - 1; i >= 0; i-- {
 		var parts []string
-		for _, n := range st.Steps[i] {
-			if o, ok := st.Outputs[n.ID]; ok && strings.TrimSpace(o.Text) != "" {
+		for _, n := range wf.Steps[i] {
+			if o, ok := wf.Outputs[n.ID]; ok && strings.TrimSpace(o.Text) != "" {
 				parts = append(parts, fmt.Sprintf("From %s:\n%s", n.Title, o.Text))
 			}
 		}
@@ -156,12 +234,12 @@ func previousInput(st State, row int) string {
 	return ""
 }
 
-func stepPrompts(st State, n *Node, input string) (system, user string) {
+func stepPrompts(wf Workflow, n *Node, input string) (system, user string) {
 	system = fmt.Sprintf(
 		"You are %q, one agent step in a team workflow called %q. Do only your own step.\n\nYour instructions:\n%s\n\n"+
 			"You cannot call external tools in this version, so work from the material you are given and say plainly when something you would need is missing. "+
 			"Write the output the next step or person will use, with no preamble.",
-		n.Title, st.Name, n.Instruction)
+		n.Title, wf.Name, n.Instruction)
 	if input == "" {
 		user = "There is no output from an earlier step. Do your step from your instructions alone."
 	} else {
@@ -175,8 +253,13 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	st := s.store.Get()
-	row, n := locate(st.Steps, req.StepID)
+	id := r.PathValue("id")
+	wf, err := s.store.Get(id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	row, n := locate(wf.Steps, req.StepID)
 	if n == nil {
 		writeError(w, http.StatusNotFound, "no such step")
 		return
@@ -185,21 +268,21 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "only agent steps run automatically; people finish their own steps")
 		return
 	}
-	system, user := stepPrompts(st, n, previousInput(st, row))
+	system, user := stepPrompts(wf, n, previousInput(wf, row))
 	fallback := fmt.Sprintf("Simulated output. Connect an Anthropic API key (Integrations tab) to run %s with Claude.\n\nIt would follow: %s", n.Title, n.Instruction)
 	text, simulated, err := s.generate(r.Context(), system, user, fallback, 1500)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	if err := s.store.SetOutput(n.ID, Output{Text: text, Simulated: simulated}); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := s.store.SetOutput(id, n.ID, Output{Text: text, Simulated: simulated}); err != nil {
+		storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, runResponse{StepID: n.ID, Text: text, Simulated: simulated})
 }
 
-// generate calls Claude when a key is configured, otherwise returns the fallback.
+// generate calls Claude when a key is connected, otherwise returns the fallback.
 func (s *Server) generate(ctx context.Context, system, user, fallback string, maxTokens int) (string, bool, error) {
 	if !s.claude.Enabled() {
 		return fallback, true, nil
@@ -240,9 +323,13 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "message is too long")
 		return
 	}
-	st := s.store.Get()
+	wf, err := s.store.Get(r.PathValue("id"))
+	if err != nil {
+		storeError(w, err)
+		return
+	}
 	var outline []string
-	for i, g := range st.Steps {
+	for i, g := range wf.Steps {
 		var titles []string
 		for _, n := range g {
 			titles = append(titles, n.Title)
@@ -256,13 +343,13 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			"You are %q, an agent in a team workflow called %q. Your standing instructions:\n%s\n\n"+
 				"A teammate has just messaged you in the team chat. Their message has been added to your instructions for the next run. "+
 				"Reply in one or two plain sentences: confirm what you will do differently, or ask one short question if it is unclear. Do not use lists.",
-			req.AgentName, st.Name, req.Instruction)
+			req.AgentName, wf.Name, req.Instruction)
 		fallback = "Understood. I have added that to my instructions and will follow it on the next run."
 	} else {
 		system = fmt.Sprintf(
 			"You are Claude, helping a team build a workflow called %q that mixes agents and people. The steps are:\n%s\n\n"+
 				"Answer the teammate in at most three plain sentences. Suggest a concrete change to the workflow when it helps. Do not use lists.",
-			st.Name, strings.Join(outline, "\n"))
+			wf.Name, strings.Join(outline, "\n"))
 		fallback = "Noted. Connect an Anthropic API key in the Integrations tab and I will be able to answer properly."
 	}
 	reply, simulated, err := s.generate(r.Context(), system, req.Message, fallback, 400)
