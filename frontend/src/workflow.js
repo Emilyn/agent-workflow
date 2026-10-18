@@ -1,9 +1,25 @@
 // Pure helpers for reading and changing the workflow document.
 
-export const PEOPLE = {
-  Amara: { initials: 'AM', bg: '#EBD9CE', fg: '#5A2E18' },
-  Theo: { initials: 'TH', bg: '#D5E3E0', fg: '#1C4A45' },
-};
+// People get a stable colour and initials from their name.
+const SWATCHES = [
+  { bg: '#EBD9CE', fg: '#5A2E18' },
+  { bg: '#D5E3E0', fg: '#1C4A45' },
+  { bg: '#E4E1F2', fg: '#2F2F66' },
+  { bg: '#F3E6B8', fg: '#5E4A00' },
+  { bg: '#DDE8D2', fg: '#2F5018' },
+  { bg: '#F0D5DD', fg: '#6A2038' },
+];
+export function personStyle(name) {
+  const n = (name || '?').trim();
+  let h = 0;
+  for (const ch of n) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  const words = n.split(/\s+/).filter(Boolean);
+  const initials = ((words[0]?.[0] || '?') + (words.length > 1 ? words[words.length - 1][0] : words[0]?.[1] || '')).toUpperCase();
+  return { initials, ...SWATCHES[h % SWATCHES.length] };
+}
+
+export const ROLE_RANK = { member: 1, admin: 2, owner: 3 };
+export const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', member: 'Member' };
 
 export const LIBRARY = [
   { id: 'research', name: 'Research agent', role: 'Searches the web and your files', instruction: 'Search the sources you are given, collect the relevant facts with links, and flag anything you could not verify.', tools: ['Web search', 'Docs'], model: 'Claude Sonnet' },
@@ -36,7 +52,15 @@ export const fullName = (name) => {
   const n = (name || '').trim();
   return /agent$/i.test(n) ? n : `${n} agent`;
 };
-export const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+export const clock = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+
+// Adds messages that are not there yet (by id), oldest first.
+export function mergeMessages(have, incoming) {
+  const seen = new Set(have.map((m) => m.id));
+  const fresh = incoming.filter((m) => !seen.has(m.id));
+  if (!fresh.length) return have;
+  return [...have, ...fresh].sort((a, b) => a.id - b.id).slice(-200);
+}
 
 export const rowOf = (steps, id) => steps.findIndex((g) => g.some((n) => n.id === id));
 export const findNode = (steps, id) => {
@@ -54,11 +78,7 @@ export function runSummary(doc) {
   const total = doc.steps.length;
   if (doc.progress >= total) return { done: true, waiting: null, total };
   const human = doc.steps[doc.progress].find((n) => n.kind === 'human');
-  return { done: false, waiting: human ? human.assignee : null, total };
-}
-
-export function addMessage(doc, author, kind, text) {
-  return { ...doc, messages: [...doc.messages, { author, kind, time: nowTime(), text }].slice(-200) };
+  return { done: false, waiting: human ? human.assignee || 'an assignee' : null, total };
 }
 
 // Inserts a one-step row after the selected step, or after the current step if that is later.
@@ -100,14 +120,14 @@ export function agentNode(doc, agent) {
   };
 }
 
-export function personNode(doc, step) {
+export function personNode(doc, step, assignee) {
   return {
     id: `u${doc.nextId}`,
     kind: 'human',
     title: step.name,
     desc: step.desc,
-    who: 'Theo',
-    assignee: 'Theo',
+    who: assignee,
+    assignee,
     instruction: step.instruction,
     tools: [],
   };

@@ -3,7 +3,7 @@ import { Spark } from './Icons.jsx';
 
 // Connects the user's own Anthropic API key. Claude.ai sign-in (Free, Pro or Max) is
 // deliberately not offered: Anthropic does not allow third-party apps to use it.
-export default function ClaudeCard({ claude, onConnect, onDisconnect }) {
+export default function ClaudeCard({ claude, canManage, onConnect, onDisconnect }) {
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
@@ -39,7 +39,7 @@ export default function ClaudeCard({ claude, onConnect, onDisconnect }) {
   };
 
   const on = claude?.connected;
-  const fromEnv = claude?.source === 'environment';
+  const fromServer = claude?.source === 'server';
 
   return (
     <div className="int" data-testid="claude-card">
@@ -51,23 +51,24 @@ export default function ClaudeCard({ claude, onConnect, onDisconnect }) {
             <span className={`pill ${on ? 'done' : 'waiting'}`} style={{ padding: '2px 10px' }}>{on ? 'Connected' : 'Not connected'}</span>
           </div>
           <span className="small" style={{ color: 'var(--ink-2)' }}>
-            Agents run on Claude. Connect your own Anthropic API key and usage is billed to your Anthropic account.
+            Agents run on Claude. One key is shared by the whole workspace, and usage is billed to the Anthropic account it belongs to.
           </span>
         </div>
       </div>
 
-      {on ? (
+      {on && !fromServer && (
         <>
-          <span className="ok">
-            Connected with an API key ending {claude.keyHint || '…'}{fromEnv ? ' (set on the server)' : ''}. Model: {claude.model}.
-          </span>
-          {fromEnv ? (
-            <span className="small muted">This key comes from the server&rsquo;s <code>ANTHROPIC_API_KEY</code>, so it can only be changed there.</span>
-          ) : (
-            <button className="btn outline block" type="button" onClick={disconnect} disabled={working}>Disconnect Claude</button>
-          )}
+          <span className="ok">Connected{claude.keyHint ? ` with an API key ending ${claude.keyHint}` : ''}. Model: {claude.model}.</span>
+          {canManage && <button className="btn outline block" type="button" onClick={disconnect} disabled={working}>Disconnect Claude</button>}
         </>
-      ) : (
+      )}
+      {fromServer && (
+        <span className="ok">Using the server&rsquo;s shared key. Model: {claude.model}.{canManage ? ' You can connect this workspace\u2019s own key instead.' : ''}</span>
+      )}
+      {!(on && !fromServer) && !canManage && !on && (
+        <span className="small muted">Ask a workspace admin to connect an Anthropic API key. Until then, agent steps and replies are simulated.</span>
+      )}
+      {!(on && !fromServer) && canManage && (
         <form className="col g8" onSubmit={connect}>
           <label className="lbl" htmlFor="claude-key">Anthropic API key</label>
           <input
@@ -85,7 +86,7 @@ export default function ClaudeCard({ claude, onConnect, onDisconnect }) {
             {working ? 'Checking the key…' : 'Connect Claude'}
           </button>
           <span className="small muted">
-            Create a key in the <a href="https://platform.claude.com/" target="_blank" rel="noreferrer">Claude Console</a>. The key is checked with Anthropic, stored only on this app&rsquo;s server, and never shown again.
+            Create a key in the <a href="https://platform.claude.com/" target="_blank" rel="noreferrer">Claude Console</a>. The key is checked with Anthropic, stored encrypted on this app&rsquo;s server, and never shown again.
           </span>
         </form>
       )}

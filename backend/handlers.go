@@ -5,46 +5,94 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type Server struct {
-	store     *Store
-	claude    *Claude
-	credsPath string // where a user-connected API key is stored
-	envKey    bool   // true when the key comes from ANTHROPIC_API_KEY and cannot be changed in the app
+	cfg         Config
+	repo        *Repo
+	claude      *Claude
+	sealer      *Sealer
+	log         *slog.Logger
+	logins      *limiter // per IP and email
+	loginsIP    *limiter // per IP
+	signups     *limiter
+	claudeCalls *limiter // per workspace, so one teammate can't burn through the shared key
+	dummyHash   string
 }
 
-func (s *Server) Routes(staticDir string) http.Handler {
+func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
+	sealer, err := NewSealer(cfg.Secret)
+	if err != nil {
+		return nil, err
+	}
+	dummy, err := hashPasswordN("not-a-real-password", passwordIterations)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{
+		cfg: cfg, repo: repo, sealer: sealer, log: log,
+		claude:      NewClaude(cfg.Model, cfg.AnthropicURL),
+		logins:      newLimiter(8, 15*time.Minute),
+		loginsIP:    newLimiter(60, 15*time.Minute),
+		signups:     newLimiter(10, time.Hour),
+		claudeCalls: newLimiter(60, time.Minute),
+		dummyHash:   dummy,
+	}, nil
+}
+
+func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
+	mux.HandleFunc("GET /api/ready", s.ready)
 
-	mux.HandleFunc("GET /api/claude", s.getClaude)
-	mux.HandleFunc("PUT /api/claude/key", s.putClaudeKey)
-	mux.HandleFunc("DELETE /api/claude/key", s.deleteClaudeKey)
+	mux.HandleFunc("POST /api/auth/signup", s.signup)
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("GET /api/me", s.authed(s.me))
+	mux.HandleFunc("GET /api/invites/preview", s.invitePreview)
+	mux.HandleFunc("POST /api/invites/accept", s.authed(s.inviteAccept))
 
-	mux.HandleFunc("GET /api/workspace", s.getWorkspace)
-	mux.HandleFunc("PUT /api/workspace", s.putWorkspace)
+	mux.HandleFunc("POST /api/workspaces", s.authed(s.createWorkspace))
+	mux.HandleFunc("PATCH /api/workspaces/{ws}", s.inWorkspace("admin", s.renameWorkspace))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}", s.inWorkspace("owner", s.deleteWorkspace))
 
-	mux.HandleFunc("GET /api/workflows", s.listWorkflows)
-	mux.HandleFunc("POST /api/workflows", s.createWorkflow)
-	mux.HandleFunc("GET /api/workflows/{id}", s.getWorkflow)
-	mux.HandleFunc("PUT /api/workflows/{id}", s.putWorkflow)
-	mux.HandleFunc("DELETE /api/workflows/{id}", s.deleteWorkflow)
-	mux.HandleFunc("POST /api/workflows/{id}/run/step", s.runStep)
-	mux.HandleFunc("POST /api/workflows/{id}/run/reset", s.runReset)
-	mux.HandleFunc("POST /api/workflows/{id}/chat", s.chat)
+	mux.HandleFunc("GET /api/workspaces/{ws}/members", s.inWorkspace("member", s.listMembers))
+	mux.HandleFunc("PATCH /api/workspaces/{ws}/members/{uid}", s.inWorkspace("admin", s.changeRole))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/members/{uid}", s.inWorkspace("member", s.removeMember))
+	mux.HandleFunc("GET /api/workspaces/{ws}/invites", s.inWorkspace("admin", s.listInvites))
+	mux.HandleFunc("POST /api/workspaces/{ws}/invites", s.inWorkspace("admin", s.createInvite))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/invites/{id}", s.inWorkspace("admin", s.deleteInvite))
+
+	mux.HandleFunc("GET /api/workspaces/{ws}/claude", s.inWorkspace("member", s.getClaude))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/claude/key", s.inWorkspace("admin", s.putClaudeKey))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/claude/key", s.inWorkspace("admin", s.deleteClaudeKey))
+
+	mux.HandleFunc("GET /api/workspaces/{ws}/settings", s.inWorkspace("member", s.getSettings))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/settings", s.inWorkspace("member", s.putSettings))
+
+	mux.HandleFunc("GET /api/workspaces/{ws}/workflows", s.inWorkspace("member", s.listWorkflows))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows", s.inWorkspace("member", s.createWorkflow))
+	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}", s.inWorkspace("member", s.getWorkflow))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/workflows/{id}", s.inWorkspace("member", s.putWorkflow))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/workflows/{id}", s.inWorkspace("member", s.deleteWorkflow))
+	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}/sync", s.inWorkspace("member", s.sync))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/messages", s.inWorkspace("member", s.postMessage))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/run/step", s.inWorkspace("member", s.runStep))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/run/reset", s.inWorkspace("member", s.runReset))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/chat", s.inWorkspace("member", s.chat))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such endpoint")
 	})
-	mux.Handle("/", spa(staticDir))
-	return logRequests(mux)
+	mux.Handle("/", spa(s.cfg.StaticDir))
+	return s.withMiddleware(mux)
 }
 
 // ---------- plumbing ----------
@@ -59,35 +107,47 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// storeError maps store errors to HTTP statuses.
-func storeError(w http.ResponseWriter, err error) {
+// fail maps repository errors to HTTP statuses; anything unexpected is logged and hidden.
+func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, errLastWorkflow):
 		writeError(w, http.StatusConflict, "Keep at least one workflow. Create another before deleting this one.")
-	default:
+	case errors.Is(err, errConflict):
+		writeError(w, http.StatusConflict, "Someone else changed this workflow. Reload to see their changes.")
+	case errors.Is(err, errLastOwner):
+		writeError(w, http.StatusConflict, "A workspace needs at least one owner. Make someone else an owner first.")
+	case errors.Is(err, errBadInvite), errors.Is(err, errAlreadyIn), errors.Is(err, errNoSuchRole), errors.Is(err, errEmailTaken):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case isValidation(err):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		s.serverError(w, r, err)
 	}
+}
+
+// validationError marks problems caused by the caller's input.
+type validationError struct{ msg string }
+
+func (e validationError) Error() string { return e.msg }
+
+func isValidation(err error) bool {
+	var v validationError
+	return errors.As(err, &v)
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, "send application/json")
+		return false
+	}
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return false
 	}
 	return true
-}
-
-func logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
-		}
-	})
 }
 
 // spa serves the built frontend and falls back to index.html for client routes.
@@ -109,32 +169,82 @@ func spa(dir string) http.Handler {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "claude": s.claude.Enabled(), "model": s.claude.Model})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// ---------- workspace (shared by all workflows) ----------
-
-func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.store.Workspace())
+// ready checks the database, for load balancers and orchestrators.
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.repo.Ping(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-func (s *Server) putWorkspace(w http.ResponseWriter, r *http.Request) {
+// ---------- shared workspace settings ----------
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	ws, err := s.repo.Settings(r.Context(), c.WS)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ws)
+}
+
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	var in Workspace
 	if !decode(w, r, &in) {
 		return
 	}
-	out, err := s.store.SetWorkspace(in)
+	in.normalize()
+	if err := in.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Everyone can create agents; only admins change which tools are connected.
+	if roleRank[c.Role] < roleRank["admin"] {
+		cur, err := s.repo.Settings(r.Context(), c.WS)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if in.GitProvider != cur.GitProvider || !sameFlags(in.Connected, cur.Connected) {
+			writeError(w, http.StatusForbidden, "Only admins can change which tools are connected.")
+			return
+		}
+	}
+	out, err := s.repo.SetSettings(r.Context(), c.WS, in)
 	if err != nil {
-		storeError(w, err)
+		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
+func sameFlags(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
 // ---------- workflows ----------
 
-func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.store.List())
+func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	list, err := s.repo.ListWorkflows(r.Context(), c.WS)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 type createRequest struct {
@@ -143,56 +253,144 @@ type createRequest struct {
 	CopyOf   string `json:"copyOf"`
 }
 
-func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	var req createRequest
 	if !decode(w, r, &req) {
 		return
 	}
-	wf, err := s.store.Create(req.Name, req.Template, req.CopyOf)
+	wf, err := s.repo.CreateWorkflow(r.Context(), c.WS, c.User.ID, req.Name, req.Template, req.CopyOf)
 	if err != nil {
-		storeError(w, err)
+		s.fail(w, r, wrapInput(err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, wf)
 }
 
-func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
-	wf, err := s.store.Get(r.PathValue("id"))
+// wrapInput turns plain errors from validation code (fmt.Errorf/errors.New) into
+// validation errors, but leaves sentinel and database errors alone.
+func wrapInput(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errNotFound), errors.Is(err, errConflict), errors.Is(err, errLastWorkflow), errors.Is(err, errLastOwner),
+		errors.Is(err, errBadInvite), errors.Is(err, errAlreadyIn), errors.Is(err, errNoSuchRole), errors.Is(err, errEmailTaken):
+		return err
+	case isDBError(err):
+		return err
+	}
+	return validationError{err.Error()}
+}
+
+func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	wf, err := s.repo.GetWorkflow(r.Context(), c.WS, r.PathValue("id"))
 	if err != nil {
-		storeError(w, err)
+		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
 }
 
-func (s *Server) putWorkflow(w http.ResponseWriter, r *http.Request) {
+func (s *Server) putWorkflow(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	var in Workflow
 	if !decode(w, r, &in) {
 		return
 	}
-	wf, err := s.store.Replace(r.PathValue("id"), in)
+	wf, err := s.repo.ReplaceWorkflow(r.Context(), c.WS, r.PathValue("id"), in)
 	if err != nil {
-		storeError(w, err)
+		if errors.Is(err, errConflict) {
+			// Send the current copy along so the client can show it without another request.
+			cur, gerr := s.repo.GetWorkflow(r.Context(), c.WS, r.PathValue("id"))
+			if gerr == nil {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "Someone else changed this workflow. Their version is now shown.", "workflow": cur})
+				return
+			}
+		}
+		s.fail(w, r, wrapInput(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
 }
 
-func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.Delete(r.PathValue("id")); err != nil {
-		storeError(w, err)
+func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	if err := s.repo.DeleteWorkflow(r.Context(), c.WS, r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.store.List())
+	s.listWorkflows(w, r, c)
 }
 
-func (s *Server) runReset(w http.ResponseWriter, r *http.Request) {
-	wf, err := s.store.ResetOutputs(r.PathValue("id"))
+func (s *Server) runReset(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	wf, err := s.repo.ResetRun(r.Context(), c.WS, r.PathValue("id"))
 	if err != nil {
-		storeError(w, err)
+		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, wf)
+}
+
+// ---------- keeping teammates in sync ----------
+
+type syncResponse struct {
+	Version  int               `json:"version"`
+	Outputs  map[string]Output `json:"outputs"`
+	Messages []Message         `json:"messages"`
+	Workflow *Workflow         `json:"workflow,omitempty"` // present when the client's version is stale
+}
+
+// sync is polled by open workflows: new chat messages, run results, and the
+// full workflow when someone else saved a newer version.
+func (s *Server) sync(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	have, _ := strconv.Atoi(r.URL.Query().Get("version"))
+	id := r.PathValue("id")
+	wf, err := s.repo.GetWorkflow(r.Context(), c.WS, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	msgs, err := s.repo.MessagesAfter(r.Context(), id, after, 200)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := syncResponse{Version: wf.Version, Outputs: wf.Outputs, Messages: msgs}
+	if wf.Version != have {
+		out.Workflow = &wf
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type messageRequest struct {
+	Text string `json:"text"`
+	Kind string `json:"kind"` // human (default) | note
+}
+
+// postMessage adds to the chat. "human" messages are signed with the caller's
+// name; "note" messages are short workflow events shown as coming from Claude.
+func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	var req messageRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	req.Text = strings.TrimSpace(req.Text)
+	if req.Text == "" || len(req.Text) > 4000 {
+		writeError(w, http.StatusBadRequest, "write a message of up to 4000 characters")
+		return
+	}
+	author, kind := c.User.Name, "human"
+	if req.Kind == "note" {
+		if len(req.Text) > 400 {
+			writeError(w, http.StatusBadRequest, "notes are short")
+			return
+		}
+		author, kind = "Claude", "agent"
+	}
+	m, err := s.repo.AddMessage(r.Context(), c.WS, r.PathValue("id"), c.User.ID, author, kind, req.Text)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, m)
 }
 
 // ---------- running a step ----------
@@ -248,15 +446,15 @@ func stepPrompts(wf Workflow, n *Node, input string) (system, user string) {
 	return system, user
 }
 
-func (s *Server) runStep(w http.ResponseWriter, r *http.Request) {
+func (s *Server) runStep(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	var req runRequest
 	if !decode(w, r, &req) {
 		return
 	}
 	id := r.PathValue("id")
-	wf, err := s.store.Get(id)
+	wf, err := s.repo.GetWorkflow(r.Context(), c.WS, id)
 	if err != nil {
-		storeError(w, err)
+		s.fail(w, r, err)
 		return
 	}
 	row, n := locate(wf.Steps, req.StepID)
@@ -270,26 +468,45 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request) {
 	}
 	system, user := stepPrompts(wf, n, previousInput(wf, row))
 	fallback := fmt.Sprintf("Simulated output. Connect an Anthropic API key (Integrations tab) to run %s with Claude.\n\nIt would follow: %s", n.Title, n.Instruction)
-	text, simulated, err := s.generate(r.Context(), system, user, fallback, 1500)
+	text, simulated, err := s.generate(r.Context(), c.WS, system, user, fallback, 1500)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		s.upstreamError(w, r, err)
 		return
 	}
-	if err := s.store.SetOutput(id, n.ID, Output{Text: text, Simulated: simulated}); err != nil {
-		storeError(w, err)
+	if err := s.repo.SetOutput(r.Context(), c.WS, id, n.ID, Output{Text: text, Simulated: simulated}); err != nil {
+		s.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, runResponse{StepID: n.ID, Text: text, Simulated: simulated})
 }
 
-// generate calls Claude when a key is connected, otherwise returns the fallback.
-func (s *Server) generate(ctx context.Context, system, user, fallback string, maxTokens int) (string, bool, error) {
-	if !s.claude.Enabled() {
+// upstreamError reports a failed Claude call. Its message comes from Anthropic, not from our own internals.
+func (s *Server) upstreamError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errClaudeBusy) {
+		writeError(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+	s.log.Warn("claude call failed", "path", r.URL.Path, "err", err)
+	writeError(w, http.StatusBadGateway, err.Error())
+}
+
+var errClaudeBusy = errors.New("This workspace is sending requests to Claude too quickly. Wait a minute and try again.")
+
+// generate calls Claude with the workspace's key when there is one, otherwise returns the fallback.
+func (s *Server) generate(ctx context.Context, wsID, system, user, fallback string, maxTokens int) (string, bool, error) {
+	key, _, err := s.keyFor(ctx, wsID)
+	if err != nil {
+		return "", false, err
+	}
+	if key == "" {
 		return fallback, true, nil
+	}
+	if !s.claudeCalls.allow(wsID) {
+		return "", false, errClaudeBusy
 	}
 	ctx, cancel := context.WithTimeout(ctx, 85*time.Second)
 	defer cancel()
-	text, err := s.claude.Complete(ctx, system, user, maxTokens)
+	text, err := s.claude.Complete(ctx, key, system, user, maxTokens)
 	if err != nil {
 		return "", false, err
 	}
@@ -305,11 +522,12 @@ type chatRequest struct {
 }
 
 type chatResponse struct {
-	Reply     string `json:"reply"`
-	Simulated bool   `json:"simulated"`
+	Messages  []Message `json:"messages"` // the teammate's message and the reply, as stored
+	Simulated bool      `json:"simulated"`
 }
 
-func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
+// chat stores the teammate's message, asks Claude (or the mentioned agent) for a reply and stores that too.
+func (s *Server) chat(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	var req chatRequest
 	if !decode(w, r, &req) {
 		return
@@ -323,9 +541,15 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "message is too long")
 		return
 	}
-	wf, err := s.store.Get(r.PathValue("id"))
+	id := r.PathValue("id")
+	wf, err := s.repo.GetWorkflow(r.Context(), c.WS, id)
 	if err != nil {
-		storeError(w, err)
+		s.fail(w, r, err)
+		return
+	}
+	mine, err := s.repo.AddMessage(r.Context(), c.WS, id, c.User.ID, c.User.Name, "human", req.Message)
+	if err != nil {
+		s.fail(w, r, err)
 		return
 	}
 	var outline []string
@@ -337,8 +561,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		outline = append(outline, fmt.Sprintf("%d. %s", i+1, strings.Join(titles, " + ")))
 	}
 
+	who := "Claude"
 	var system, fallback string
 	if req.AgentName != "" {
+		who = req.AgentName
 		system = fmt.Sprintf(
 			"You are %q, an agent in a team workflow called %q. Your standing instructions:\n%s\n\n"+
 				"A teammate has just messaged you in the team chat. Their message has been added to your instructions for the next run. "+
@@ -352,10 +578,15 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			wf.Name, strings.Join(outline, "\n"))
 		fallback = "Noted. Connect an Anthropic API key in the Integrations tab and I will be able to answer properly."
 	}
-	reply, simulated, err := s.generate(r.Context(), system, req.Message, fallback, 400)
+	reply, simulated, gerr := s.generate(r.Context(), c.WS, system, req.Message, fallback, 400)
+	if gerr != nil {
+		s.log.Warn("claude chat reply failed", "err", gerr)
+		reply, simulated = "I could not reply: "+gerr.Error(), false
+	}
+	theirs, err := s.repo.AddMessage(r.Context(), c.WS, id, "", who, "agent", reply)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, chatResponse{Reply: reply, Simulated: simulated})
+	writeJSON(w, http.StatusOK, chatResponse{Messages: []Message{mine, theirs}, Simulated: simulated})
 }

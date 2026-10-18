@@ -8,47 +8,27 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
-	"sync"
 	"time"
 )
 
-// Claude is a minimal client for the Anthropic Messages API. The API key can
-// be changed while the server runs (a user connects or disconnects their key).
+// Claude is a minimal client for the Anthropic Messages API. It holds no key:
+// each call is given the key of the workspace it runs for.
 type Claude struct {
-	APIKey  string // initial key; use SetKey afterwards
 	Model   string
 	BaseURL string
 	HTTP    *http.Client
-
-	mu sync.RWMutex
 }
 
 var errKeyRejected = errors.New("anthropic rejected the API key")
 
-func NewClaudeFromEnv() *Claude {
+func NewClaude(model, baseURL string) *Claude {
 	return &Claude{
-		APIKey:  os.Getenv("ANTHROPIC_API_KEY"),
-		Model:   envOr("ANTHROPIC_MODEL", "claude-sonnet-5-5"),
-		BaseURL: strings.TrimRight(envOr("ANTHROPIC_BASE_URL", "https://api.anthropic.com"), "/"),
+		Model:   model,
+		BaseURL: strings.TrimRight(baseURL, "/"),
 		HTTP:    &http.Client{Timeout: 90 * time.Second},
 	}
 }
-
-func (c *Claude) key() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.APIKey
-}
-
-func (c *Claude) SetKey(k string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.APIKey = k
-}
-
-func (c *Claude) Enabled() bool { return c != nil && c.key() != "" }
 
 type messagesRequest struct {
 	Model     string         `json:"model"`
@@ -113,8 +93,7 @@ func (c *Claude) Verify(ctx context.Context, key string) error {
 }
 
 // Complete sends a single user turn and returns the text of the reply.
-func (c *Claude) Complete(ctx context.Context, system, user string, maxTokens int) (string, error) {
-	key := c.key()
+func (c *Claude) Complete(ctx context.Context, key, system, user string, maxTokens int) (string, error) {
 	if key == "" {
 		return "", errors.New("Claude is not connected: add an Anthropic API key")
 	}
@@ -164,11 +143,4 @@ func (c *Claude) Complete(ctx context.Context, system, user string, maxTokens in
 		return "", errors.New("claude returned an empty reply")
 	}
 	return text, nil
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

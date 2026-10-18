@@ -44,9 +44,10 @@ export default function SettingsPanel({ doc, node, onEdit, onRemove, onDiscuss }
         <>
           <div className="col g8">
             <label className="lbl" htmlFor="assignee">Assigned to</label>
-            <select id="assignee" className="field" value={node.assignee} onChange={(e) => onEdit(node.id, { assignee: e.target.value, who: e.target.value })}>
-              <option>Amara</option>
-              <option>Theo</option>
+            <select id="assignee" className="field" value={node.assignee || ''} onChange={(e) => onEdit(node.id, { assignee: e.target.value, who: e.target.value || 'Unassigned' })}>
+              <option value="">Unassigned</option>
+              {node.assignee && !doc.members.some((m) => m.name === node.assignee) && <option value={node.assignee}>{node.assignee} (not in this workspace)</option>}
+              {doc.members.map((m) => <option key={m.userId} value={m.name}>{m.name}</option>)}
             </select>
           </div>
           <div className="col g8">

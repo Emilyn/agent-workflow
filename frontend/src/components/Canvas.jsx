@@ -2,7 +2,7 @@ import { KIND_LABEL, runSummary, statusFor } from '../workflow.js';
 import { Clock, Person, Spark } from './Icons.jsx';
 
 export function Pill({ status, node }) {
-  const text = { done: 'Done', running: 'Running', queued: 'Queued', waiting: `Waiting on ${node?.assignee}` }[status];
+  const text = { done: 'Done', running: 'Running', queued: 'Queued', waiting: `Waiting on ${node?.assignee || 'an assignee'}` }[status];
   return <span className={`pill ${status}`}>{text}</span>;
 }
 
@@ -28,7 +28,7 @@ export default function Canvas({ doc, selected, busy, onSelect, onCreateAgent })
     <main className="canvas-wrap">
       <div className="runbar">
         <div className="row wrap g12">
-          <strong style={{ fontSize: 14 }}>Run 12</strong>
+          <strong style={{ fontSize: 14 }}>Run</strong>
           {runPill}
           <span className="small muted">{done ? `All ${total} steps finished` : `Step ${doc.progress + 1} of ${total}`}</span>
         </div>

@@ -73,7 +73,7 @@ button { cursor: pointer; }
 
 .side { flex: 1 1 340px; max-width: 420px; background: var(--card); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 560px; }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
-.tab { flex: 1; height: 48px; background: none; border: none; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: var(--muted); }
+.tab { flex: 1; height: 48px; padding: 0 4px; line-height: 1.15; background: none; border: none; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: var(--muted); }
 .tab.on { border-bottom-color: var(--ink); color: var(--ink); font-weight: 600; }
 .panel { flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
 .tag { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 1px 7px; border-radius: 6px; background: var(--ink); color: var(--paper); }
@@ -125,3 +125,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .tpl { border: 0; padding: 0; margin: 0; }
 .tpl-opt { min-height: 44px; }
 .tpl-opt input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+/* workspace menu, auth, team */
+.ws-btn { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 32px; padding: 0 8px; margin-left: -8px; background: transparent; border: 1px solid transparent; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.ws-btn:hover:not(:disabled) { background: var(--paper-2); border-color: var(--line); }
+.ws-btn:focus-visible { outline: 3px solid #7A9CC6; outline-offset: 2px; }
+.ws-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 340px; }
+.menu-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.auth { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: var(--paper); }
+.auth-card { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line-2); border-radius: 20px; padding: 28px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 12px 32px rgba(20, 20, 19, 0.08); }
+.people { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.person-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.person-row .avatar { border: none; }
+.role-select { width: auto; height: 40px; min-width: 110px; }

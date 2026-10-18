@@ -2,16 +2,16 @@ import { INTEGRATIONS, integrationName } from '../workflow.js';
 import ClaudeCard from './ClaudeCard.jsx';
 import { INTEGRATION_ICON } from './Icons.jsx';
 
-export default function IntegrationsPanel({ doc, claude, onConnectClaude, onDisconnectClaude, onProvider, onToggle }) {
+export default function IntegrationsPanel({ doc, claude, canManage, onConnectClaude, onDisconnectClaude, onProvider, onToggle }) {
   return (
     <div className="panel">
       <div className="col g6">
         <span className="serif" style={{ fontSize: 28 }}>Connect your tools</span>
         <span style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--ink-2)' }}>
-          Claude is real: connect an API key and agents run on it. GitHub, GitLab, Jira and Figma below are placeholders for now; no real account is linked.
+          Claude is real: connect an API key and agents run on it. GitHub, GitLab, Jira and Figma below are placeholders for now; no real account is linked. These settings are shared by everyone in the workspace.
         </span>
       </div>
-      <ClaudeCard claude={claude} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} />
+      <ClaudeCard claude={claude} canManage={canManage} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} />
       {['git', 'jira', 'figma'].map((key) => {
         const it = INTEGRATIONS[key];
         const on = doc.connected[key];
@@ -29,7 +29,7 @@ export default function IntegrationsPanel({ doc, claude, onConnectClaude, onDisc
                 <span className="small" style={{ color: 'var(--ink-2)' }}>{it.desc}</span>
               </div>
             </div>
-            {key === 'git' && !on && (
+            {canManage && key === 'git' && !on && (
               <div className="seg" role="group" aria-label="Choose a code host">
                 <button type="button" className={doc.gitProvider === 'github' ? 'on' : ''} onClick={() => onProvider('github')}>GitHub</button>
                 <button type="button" className={doc.gitProvider === 'gitlab' ? 'on' : ''} onClick={() => onProvider('gitlab')}>GitLab</button>
@@ -39,10 +39,14 @@ export default function IntegrationsPanel({ doc, claude, onConnectClaude, onDisc
               <span className="eyebrow">Agents will be able to</span>
               <div className="row wrap g8">{it.can.map((c) => <span key={c} className="tag-chip">{c}</span>)}</div>
             </div>
-            {on && <span className="ok">Connected. Signed in with your {name} account.</span>}
-            <button className={`btn block ${on ? 'outline' : 'primary'}`} type="button" onClick={() => onToggle(key)} style={{ justifyContent: 'center' }}>
-              {on ? 'Disconnect' : 'Connect'} {name}
-            </button>
+            {on && <span className="ok">Marked as connected (placeholder).</span>}
+            {canManage ? (
+              <button className={`btn block ${on ? 'outline' : 'primary'}`} type="button" onClick={() => onToggle(key)} style={{ justifyContent: 'center' }}>
+                {on ? 'Disconnect' : 'Connect'} {name}
+              </button>
+            ) : (
+              <span className="small muted">Only workspace admins can change this.</span>
+            )}
           </div>
         );
       })}
