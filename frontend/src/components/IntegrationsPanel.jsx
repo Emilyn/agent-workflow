@@ -8,7 +8,7 @@ export default function IntegrationsPanel({ claude, ints, canManage, onConnectCl
       <div className="col g6">
         <span className="serif" style={{ fontSize: 28 }}>Connect your tools</span>
         <span style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--ink-2)' }}>
-          Claude runs the agents. GitHub, GitLab, Jira and Figma are real connections: an admin signs in once, and agents whose tools include one can read from it while they run. Access is read only and shared by everyone in the workspace.
+          Claude runs the agents. An admin connects each service once; agents with that tool can read from it while they run, and the whole workspace shares the access. The only thing agents write is a code review on GitHub or GitLab, which a person approves first.
         </span>
       </div>
       <ClaudeCard claude={claude} canManage={canManage} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} />
