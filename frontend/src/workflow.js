@@ -35,18 +35,18 @@ export const PERSON_STEPS = [
   { key: 'handoff', name: 'Hand off', hint: 'Assign to a teammate', desc: 'Hand the work to a teammate to finish.', instruction: 'Take over from here and finish the remaining work.' },
 ];
 
-export const INTEGRATIONS = {
-  git: { desc: 'Let agents read repositories, open pull requests and respond to reviews. Pick GitHub or GitLab.', can: ['Read code and diffs', 'Open pull requests', 'Comment on reviews'], note: 'read code and open pull requests', icon: 'git' },
-  jira: { name: 'Jira', desc: 'Let agents read issues and sprints, and move tickets forward when a step finishes.', can: ['Read issues and sprints', 'Create and update tickets', 'Comment on tickets'], note: 'read and update tickets', icon: 'jira' },
-  figma: { name: 'Figma', desc: 'Let agents read frames and comments, and attach designs to a step.', can: ['Read files and frames', 'Read comments', 'Export images'], note: 'read frames and comments', icon: 'figma' },
-};
+// Tools that connect to a real account. The id matches the server's provider id.
+export const LIVE_TOOLS = [
+  { id: 'github', label: 'GitHub', desc: 'Let agents read repositories, issues, pull requests, commits and files. Read only.' },
+  { id: 'gitlab', label: 'GitLab', desc: 'Let agents read projects, issues, merge requests, commits and files. Read only.' },
+  { id: 'jira', label: 'Jira', desc: 'Let agents search and read Jira issues and projects. Read only.' },
+  { id: 'figma', label: 'Figma', desc: 'Let agents read file structure, text in frames and comments. Read only.' },
+];
 
 export const KIND_LABEL = { trigger: 'Trigger', agent: 'Agent step', human: 'Person step' };
 
 export const blankForm = () => ({ name: '', role: '', instructions: '', model: 'Claude Sonnet', tools: {} });
 
-export const gitName = (doc) => (doc.gitProvider === 'gitlab' ? 'GitLab' : 'GitHub');
-export const integrationName = (doc, key) => (key === 'git' ? gitName(doc) : INTEGRATIONS[key].name);
 export const allAgents = (doc) => [...LIBRARY, ...doc.customAgents];
 export const fullName = (name) => {
   const n = (name || '').trim();

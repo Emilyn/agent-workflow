@@ -1,11 +1,11 @@
-import { gitName } from '../workflow.js';
+import { LIVE_TOOLS } from '../workflow.js';
 
 const MODELS = ['Claude Sonnet', 'Claude Opus', 'Claude Haiku'];
 
-export default function BuilderPanel({ doc, form, error, onChange, onSave, onCancel, onGoIntegrations }) {
+export default function BuilderPanel({ ints, form, error, onChange, onSave, onCancel, onGoIntegrations }) {
   const tools = [
     { label: 'Web search' }, { label: 'Docs' }, { label: 'Sheets' }, { label: 'Slack' }, { label: 'Email' },
-    { label: gitName(doc), need: 'git' }, { label: 'Jira', need: 'jira' }, { label: 'Figma', need: 'figma' },
+    ...LIVE_TOOLS.map((t) => ({ label: t.label, id: t.id })),
   ];
 
   return (
@@ -42,7 +42,7 @@ export default function BuilderPanel({ doc, form, error, onChange, onSave, onCan
         <span className="lbl">Tools and sources</span>
         <div className="row wrap g8">
           {tools.map((t) => {
-            if (t.need && !doc.connected[t.need]) {
+            if (t.id && !ints?.[t.id]?.connected) {
               return <button key={t.label} type="button" className="tool locked" onClick={onGoIntegrations}>{t.label} · connect first</button>;
             }
             const on = !!form.tools[t.label];

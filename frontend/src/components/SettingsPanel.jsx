@@ -1,7 +1,7 @@
-import { KIND_LABEL, rowOf, statusFor } from '../workflow.js';
+import { KIND_LABEL, LIVE_TOOLS, rowOf, statusFor } from '../workflow.js';
 import { Pill } from './Canvas.jsx';
 
-export default function SettingsPanel({ doc, node, onEdit, onRemove, onDiscuss }) {
+export default function SettingsPanel({ doc, node, ints, onEdit, onRemove, onDiscuss, onGoIntegrations }) {
   const row = rowOf(doc.steps, node.id);
   const output = doc.outputs[node.id];
 
@@ -23,9 +23,26 @@ export default function SettingsPanel({ doc, node, onEdit, onRemove, onDiscuss }
           <div className="col g8">
             <span className="lbl">Tools and sources</span>
             <div className="row wrap g8">
-              {node.tools.length ? node.tools.map((t) => <span key={t} className="tag-chip">{t}</span>) : <span className="small muted">No tools selected.</span>}
+              {LIVE_TOOLS.map((t) => {
+                const on = node.tools.includes(t.label);
+                if (!on && !ints?.[t.id]?.connected) {
+                  return <button key={t.id} type="button" className="tool locked" onClick={onGoIntegrations}>{t.label} · connect first</button>;
+                }
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`tool${on ? ' on' : ''}`}
+                    aria-pressed={on}
+                    onClick={() => onEdit(node.id, { tools: on ? node.tools.filter((x) => x !== t.label) : [...node.tools, t.label] })}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+              {node.tools.filter((t) => !LIVE_TOOLS.some((l) => l.label === t)).map((t) => <span key={t} className="tag-chip">{t}</span>)}
             </div>
-            <span className="small muted">The GitHub tool is live: when GitHub is connected, this agent can read repositories, issues and pull requests while it runs. Other tools are recorded but not called yet.</span>
+            <span className="small muted">Connected tools (GitHub, GitLab, Jira, Figma) are live: this agent can read from them while it runs. Other tools are recorded but not called yet.</span>
           </div>
           <div className="row box" style={{ justifyContent: 'space-between' }}>
             <span>Model</span><strong>{node.who}</strong>
@@ -35,7 +52,7 @@ export default function SettingsPanel({ doc, node, onEdit, onRemove, onDiscuss }
               <span className="lbl">Latest output</span>
               {output?.simulated && <span className="tag">Simulated</span>}
             </div>
-            {output?.used?.length > 0 && <span className="small muted">Used: {output.used.map((u) => u.replace(/^github_/, '').replace(/_/g, ' ')).join(', ')}</span>}
+            {output?.used?.length > 0 && <span className="small muted">Used: {output.used.map((u) => u.replace(/_/g, ' ')).join(', ')}</span>}
             {output ? <div className="output">{output.text}</div> : <span className="small muted">Nothing yet. Run the workflow to see what this agent produces.</span>}
           </div>
         </>

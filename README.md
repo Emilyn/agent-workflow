@@ -9,7 +9,7 @@ Build workflows out of AI agents and people, and talk to the team (and the agent
 - **Run it:** each agent step is sent to Claude with the output of the step before it. People finish their own steps.
 - **Team chat:** one thread per workflow, stored on the server. Teammates see new messages within a few seconds. Mentioning an agent adds your message to its instructions.
 - **Claude per workspace:** an admin pastes an Anthropic API key. It is encrypted in the database and never sent back to the browser.
-- **GitHub per workspace:** an admin signs in with GitHub (OAuth). Agents whose tools include GitHub can then read repositories, issues, pull requests, commits and files while they run. Read only.
+- **GitHub, GitLab, Jira and Figma per workspace:** an admin signs in once (OAuth). Agents whose tools include one of them can then read from it while they run: repositories, issues, merge requests and files; Jira issues and projects; Figma frames, text and comments. Read only.
 
 ## Stack
 
@@ -61,24 +61,40 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 | `ALLOW_SIGNUP` | `true` | `false` closes sign-up. |
 | `ANTHROPIC_API_KEY` | unset | Optional key used by workspaces that haven't connected their own. Everyone on the server then shares it. |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model for agent steps and chat. |
-| `PUBLIC_URL` | `http://localhost:<PORT>` | The address people use in the browser. GitHub sends them back to `PUBLIC_URL/api/integrations/github/callback`. |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | A GitHub OAuth app. Without them the GitHub card says it is not configured. |
-| `GITHUB_SCOPES` | `public_repo read:user` | What the OAuth app asks for. Use `repo read:user` to let agents read private repositories. |
+| `PUBLIC_URL` | `http://localhost:<PORT>` | The address people use in the browser. Providers send them back to `PUBLIC_URL/api/integrations/<provider>/callback`. |
+| `GITHUB_`, `GITLAB_`, `JIRA_`, `FIGMA_` `CLIENT_ID` / `CLIENT_SECRET` | unset | An OAuth app for each service you want to offer. A service without them shows "no OAuth app yet". |
+| `…_SCOPES` | see below | What each OAuth app asks for. |
 | `GITHUB_OAUTH_URL`, `GITHUB_API_URL` | `https://github.com`, `https://api.github.com` | Change for GitHub Enterprise Server. |
+| `GITLAB_URL` | `https://gitlab.com` | Change for a self-managed GitLab. |
+| `JIRA_AUTH_URL`, `JIRA_API_URL`, `FIGMA_AUTH_URL`, `FIGMA_API_URL` | Atlassian and Figma's public addresses | Rarely changed. |
 | `PORT` | `8080` | |
 | `DB_MAX_CONNS` | `20` | Connection pool size per instance. |
 | `STATIC_DIR` | `../frontend/dist` | Built frontend to serve (`/app/public` in the image). |
 
 `GET /api/health` says the process is up; `GET /api/ready` also checks the database. The server logs JSON, handles SIGTERM by finishing in-flight requests, and the image has a `healthcheck` subcommand.
 
-## Connecting GitHub
+## Connecting tools (GitHub, GitLab, Jira, Figma)
 
-1. On GitHub: Settings, Developer settings, OAuth Apps, New OAuth App. Set the callback URL to `PUBLIC_URL/api/integrations/github/callback`.
-2. Put the client id and secret in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, and set `PUBLIC_URL`.
-3. An admin opens **Integrations**, chooses **Connect GitHub** and approves on GitHub. The access token is encrypted like the Claude key (bound to the workspace) and is never sent to the browser.
-4. Give an agent the GitHub tool. When it runs, Claude can call seven read-only tools: repository info, issues, pull requests (with changed file names), commits and file contents. The step's output shows which tools were used.
+1. Create an OAuth app at the service and set its callback URL to `PUBLIC_URL/api/integrations/<provider>/callback` (`github`, `gitlab`, `jira` or `figma`).
+2. Put its client id and secret in the matching `…_CLIENT_ID` and `…_CLIENT_SECRET`, and set `PUBLIC_URL`.
+3. An admin opens **Integrations**, chooses **Connect …** and approves on the service's own page. The sign-in is encrypted like the Claude key (bound to the workspace) and never sent to the browser.
+4. Give a step the tool: select the step, then **Step settings → Tools and sources**. When it runs, Claude can call that service's read-only tools, and the step's output lists which were used.
 
-How it is kept safe: the sign-in `state` is signed, expires after 10 minutes, and is tied to the admin, the workspace and the browser (a cookie); the callback re-checks that the user is still an admin. Tool inputs are validated (owner, repo, ref and path are checked and escaped, so an agent cannot reach other GitHub endpoints), results are truncated, each run is limited to 8 model turns and 12 tool calls, and the system prompt tells Claude that issue and file text is untrusted data, not instructions. The token has only the scopes you configured, and anyone in the workspace who can run an agent can use it through that agent, so connect an account whose access you are happy to share with the team. Disconnecting deletes the token and revokes the grant at GitHub.
+| Service | Default scopes | Where to create the app | Read-only tools |
+| --- | --- | --- | --- |
+| GitHub | `public_repo read:user` (use `repo read:user` for private repositories) | Settings → Developer settings → OAuth Apps | repo info, issues, pull requests (with changed file names), commits, file or directory contents |
+| GitLab | `read_api read_user` | User settings → Applications (or the group or admin area). Tick "Confidential" | project info, issues, merge requests (with changed file names), commits, file or directory contents |
+| Jira | `read:jira-work read:jira-user offline_access` | developer.atlassian.com → OAuth 2.0 (3LO) app. Add the Jira API permissions | list projects, search issues with JQL, read one issue with comments |
+| Figma | `current_user:read file_content:read file_comments:read` | figma.com/developers/apps | file pages and frames, text and layer outline of a frame, comments |
+
+How it is kept safe:
+
+- The sign-in `state` is signed, expires after 10 minutes, and is tied to the provider, the admin, the workspace and the browser (a cookie). The callback re-checks that the user is still an admin.
+- GitLab, Jira and Figma tokens expire. They are refreshed automatically before use, under a database row lock, so two requests or two server instances never spend the same rotating refresh token twice. If a refresh fails, the tool tells the agent that an admin must reconnect.
+- Tool inputs are validated and escaped (repository and project names, issue keys, file keys, node ids, paths and refs), so an agent cannot reach other endpoints. Results are truncated. Each run is limited to 8 model turns and 12 tool calls. The system prompt tells Claude that whatever the tools return is untrusted data, not instructions.
+- Tokens carry only the scopes you configure. Anyone in the workspace who can run an agent can use them through that agent, so connect an account whose access you are happy to share with the team.
+- Disconnecting deletes the token. GitHub and GitLab grants are also revoked at the service (Jira and Figma do not offer a revoke call for this flow, so remove the app's access in their settings if you need to).
+- Jira connects the first site Atlassian lists for the account.
 
 ## Roles
 
@@ -87,7 +103,7 @@ How it is kept safe: the sign-in `state` is signed, expires after 10 minutes, an
 | See and edit workflows, chat, run steps, create agents | yes | yes | yes |
 | See member names | yes | yes | yes |
 | See member emails, create and revoke invite links for new members | | yes | yes |
-| Connect or remove the Claude API key and GitHub, change connected tools, rename the workspace | | yes | yes |
+| Connect or remove the Claude API key and the tool connections, rename the workspace | | yes | yes |
 | Invite admins, make or change owners, delete the workspace | | | yes |
 
 Anyone can leave a workspace. A workspace always keeps at least one owner. People who aren't in a workspace get a 404 for everything in it.
@@ -117,8 +133,8 @@ All routes except health, `auth/*` and `invites/preview` need a signed-in sessio
 | `GET /api/workspaces/{ws}/members`; `PATCH`, `DELETE …/members/{userId}` | List, change role, remove or leave. |
 | `GET`, `POST …/invites`; `DELETE …/invites/{id}` | Invite links. The token is returned once, on creation. |
 | `GET …/claude`; `PUT`, `DELETE …/claude/key` | Whether Claude is connected, and the stored key. |
-| `GET …/integrations`; `POST …/integrations/github/start`; `DELETE …/integrations/github` | GitHub status, the GitHub sign-in address (admins), and disconnect (admins). |
-| `GET /api/integrations/github/callback` | Where GitHub sends the browser back. Redirects to the app with `?github=connected` or `?github=error&reason=…`. |
+| `GET …/integrations`; `POST …/integrations/{provider}/start`; `DELETE …/integrations/{provider}` | Connection status of every tool, the sign-in address (admins), and disconnect (admins). `{provider}` is `github`, `gitlab`, `jira` or `figma`. |
+| `GET /api/integrations/{provider}/callback` | Where the service sends the browser back. Redirects to the app with `?integration=…&result=connected` or `result=error&reason=…`. |
 | `GET`, `PUT …/settings` | Custom agents and integration flags. |
 | `GET`, `POST …/workflows`; `GET`, `PUT`, `DELETE …/workflows/{id}` | Workflows. `PUT` needs the `version` you loaded and returns 409 with the current copy if someone saved since. |
 | `GET …/workflows/{id}/sync?after=&version=` | Polled by open screens: new messages, results, and the workflow if it changed. |
@@ -149,10 +165,9 @@ The server keeps no state in memory except rate-limit counters, so you can run s
 ## What is real and what is a placeholder
 
 - **Real:** accounts, teams, roles, invites, Postgres storage, encrypted per-workspace API keys, workflows, running agent steps through Claude, shared chat, conflict detection on saves. Tested against a fake Anthropic server, plus a manual check that Anthropic rejects a bad key.
-- **Real, GitHub:** OAuth connect per workspace, encrypted token, seven read-only tools that Claude calls during a step. Tested against a fake GitHub and a scripted fake Anthropic, plus a browser run of the whole flow. Not tried against github.com itself (no OAuth app was available), so check the first real sign-in.
-- **Placeholder, GitLab, Jira, Figma:** "Connect" only toggles a flag. Nothing signs in and agents can't use them. They can follow the GitHub pattern (`github.go`, `integration_tokens`).
+- **Real, GitHub, GitLab, Jira, Figma:** OAuth connect per workspace, encrypted tokens with automatic refresh, read-only tools that Claude calls during a step. Tested against fake services and a scripted fake Anthropic (including token expiry, rotation, concurrent refresh and input validation), plus a browser run of connecting all four and running a step. **Not tried against the real services** (no OAuth apps were available), so expect to fix small differences on the first real sign-in, especially Figma's scope names and Jira's search endpoint.
 - **Placeholder, other tools on an agent** (Web search, Docs, Sheets, Slack, Email): recorded but not called.
-- **Not built for GitHub:** writing (comments, PRs), GitHub Apps with per-repository installs, token refresh, one connection per user instead of per workspace.
+- **Not built for the connected tools:** writing (comments, tickets, pull requests), per-repository or per-project limits, choosing among several Jira sites, one connection per user instead of per workspace.
 - **Not built:** password reset, email verification and email delivery, sign-in with Google or SSO, two-factor, audit log, billing, Branch/Parallel/Wait steps, scheduled triggers (the example's "Every Monday" is a label).
 
 ## Why API keys and not "sign in with Claude Pro"
@@ -161,7 +176,7 @@ A Claude Pro or Max plan covers Claude.ai and is billed separately from the API.
 
 ## Next steps
 
-1. The same OAuth and tool pattern for GitLab, Jira and Figma; a step editor so tools can be chosen on an existing step.
+1. Write actions with approval (comment on an issue, open a ticket) and more tools such as Slack.
 2. Password reset and email verification (needs an email provider), then SSO.
 3. Real-time updates, background runs, and scheduled triggers.
 4. Move the UI onto shadcn/ui. The init (`npx shadcn@latest init --preset b7PaZOyoUt --template vite`) needs `ui.shadcn.com` to be reachable.

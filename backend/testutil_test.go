@@ -46,7 +46,7 @@ type envOpts struct {
 	anthropicURL string
 	serverKey    string
 	allowSignup  *bool
-	githubURL    string // fake GitHub serving both OAuth and API
+	providersURL string // fake GitHub/GitLab/Jira/Figma (see fakeProviders)
 }
 
 func newEnv(t *testing.T, o ...envOpts) *env {
@@ -86,9 +86,18 @@ func newEnv(t *testing.T, o ...envOpts) *env {
 	if opt.anthropicURL == "" {
 		cfg.AnthropicURL = "http://127.0.0.1:1"
 	}
-	if opt.githubURL != "" {
+	if opt.providersURL != "" {
 		cfg.PublicURL = "http://app.test"
-		cfg.GitHub = GitHubConfig{ClientID: "cid", ClientSecret: "csecret", Scopes: "public_repo read:user", OAuthURL: opt.githubURL, APIURL: opt.githubURL}
+		r := opt.providersURL
+		app := func(id, scopes, auth, api string) OAuthApp {
+			return OAuthApp{ClientID: "cid", ClientSecret: "csecret", Scopes: scopes, AuthURL: r + "/" + id + auth, APIURL: r + "/" + id + api}
+		}
+		cfg.Apps = map[string]OAuthApp{
+			"github": app("github", "public_repo read:user", "", "/api"),
+			"gitlab": app("gitlab", "read_api read_user", "", "/api/v4"),
+			"jira":   app("jira", "read:jira-work offline_access", "", "/api"),
+			"figma":  app("figma", "file_content:read", "", "/api"),
+		}
 	}
 	if opt.allowSignup != nil {
 		cfg.AllowSignup = *opt.allowSignup

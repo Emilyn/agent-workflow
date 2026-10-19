@@ -1,15 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,302 +15,10 @@ import (
 	"time"
 )
 
-const (
-	githubProvider = "github"
-	oauthCookie    = "aw_oauth"
-	stateLifetime  = 10 * time.Minute
-)
-
-// ---------- connecting (OAuth) ----------
-
-type githubStatus struct {
-	Configured  bool   `json:"configured"`
-	Connected   bool   `json:"connected"`
-	Account     string `json:"account,omitempty"`
-	Scopes      string `json:"scopes,omitempty"`
-	ConnectedAt string `json:"connectedAt,omitempty"`
-}
-
-func (s *Server) githubStatusFor(ctx context.Context, wsID string) (githubStatus, error) {
-	st := githubStatus{Configured: s.cfg.GitHub.Enabled()}
-	info, enc, err := s.repo.Integration(ctx, wsID, githubProvider)
-	if err != nil {
-		return st, err
-	}
-	if enc != nil {
-		st.Connected, st.Account, st.Scopes, st.ConnectedAt = true, info.Account, info.Scopes, info.ConnectedAt
-	}
-	return st, nil
-}
-
-func (s *Server) integrations(w http.ResponseWriter, r *http.Request, c wsCtx) {
-	gh, err := s.githubStatusFor(r.Context(), c.WS)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"github": gh})
-}
-
-func (s *Server) stateKey() []byte {
-	h := sha256.Sum256(append([]byte("aw-oauth-state:"), s.cfg.Secret...))
-	return h[:]
-}
-
-// signState binds an authorisation round trip to one workspace, one user and one browser (the nonce is also set as a cookie).
-func (s *Server) signState(ws, uid, nonce string, exp time.Time) string {
-	payload := strings.Join([]string{ws, uid, nonce, strconv.FormatInt(exp.Unix(), 10)}, "|")
-	mac := hmac.New(sha256.New, s.stateKey())
-	mac.Write([]byte(payload))
-	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-var errBadState = errors.New("bad state")
-
-func (s *Server) verifyState(state string) (ws, uid, nonce string, err error) {
-	parts := strings.Split(state, ".")
-	if len(parts) != 2 {
-		return "", "", "", errBadState
-	}
-	payload, err1 := base64.RawURLEncoding.DecodeString(parts[0])
-	sig, err2 := base64.RawURLEncoding.DecodeString(parts[1])
-	if err1 != nil || err2 != nil {
-		return "", "", "", errBadState
-	}
-	mac := hmac.New(sha256.New, s.stateKey())
-	mac.Write(payload)
-	if !hmac.Equal(mac.Sum(nil), sig) {
-		return "", "", "", errBadState
-	}
-	f := strings.Split(string(payload), "|")
-	if len(f) != 4 {
-		return "", "", "", errBadState
-	}
-	exp, err := strconv.ParseInt(f[3], 10, 64)
-	if err != nil || time.Now().Unix() > exp {
-		return "", "", "", errExpiredState
-	}
-	return f[0], f[1], f[2], nil
-}
-
-var errExpiredState = errors.New("expired state")
-
-func (s *Server) callbackURL() string { return s.cfg.PublicURL + "/api/integrations/github/callback" }
-
-// githubStart returns the GitHub page the browser should go to. Only admins can connect.
-func (s *Server) githubStart(w http.ResponseWriter, r *http.Request, c wsCtx) {
-	g := s.cfg.GitHub
-	if !g.Enabled() {
-		writeError(w, http.StatusConflict, "This server has no GitHub OAuth app configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET.")
-		return
-	}
-	nonce := randomToken()
-	http.SetCookie(w, &http.Cookie{
-		Name: oauthCookie, Value: nonce, Path: "/api/integrations/github", MaxAge: int(stateLifetime.Seconds()),
-		HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode,
-	})
-	q := url.Values{}
-	q.Set("client_id", g.ClientID)
-	q.Set("redirect_uri", s.callbackURL())
-	q.Set("scope", g.Scopes)
-	q.Set("state", s.signState(c.WS, c.User.ID, nonce, time.Now().Add(stateLifetime)))
-	q.Set("allow_signup", "false")
-	writeJSON(w, http.StatusOK, map[string]string{"url": g.OAuthURL + "/login/oauth/authorize?" + q.Encode()})
-}
-
-// githubCallback is where GitHub sends the browser back. Failures redirect to the app with a short reason code, never GitHub's text.
-func (s *Server) githubCallback(w http.ResponseWriter, r *http.Request) {
-	fail := func(reason string, ws string) {
-		dest := "/?github=error&reason=" + reason
-		if ws != "" {
-			dest += "#/s/" + url.PathEscape(ws)
-		}
-		http.Redirect(w, r, dest, http.StatusSeeOther)
-	}
-	q := r.URL.Query()
-	ws, uid, nonce, err := s.verifyState(q.Get("state"))
-	if err != nil {
-		if errors.Is(err, errExpiredState) {
-			fail("expired", "")
-		} else {
-			fail("state", "")
-		}
-		return
-	}
-	ck, cerr := r.Cookie(oauthCookie)
-	if cerr != nil || subtle.ConstantTimeCompare([]byte(ck.Value), []byte(nonce)) != 1 {
-		fail("state", ws)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{Name: oauthCookie, Value: "", Path: "/api/integrations/github", MaxAge: -1, HttpOnly: true, Secure: s.cfg.CookieSecure, SameSite: http.SameSiteLaxMode})
-
-	u, err := s.currentUser(r)
-	if err != nil || u.ID != uid {
-		fail("session", "")
-		return
-	}
-	if role, err := s.repo.Role(r.Context(), ws, u.ID); err != nil || roleRank[role] < roleRank["admin"] {
-		fail("forbidden", "")
-		return
-	}
-	if q.Get("error") != "" || q.Get("code") == "" {
-		fail("denied", ws)
-		return
-	}
-	token, scopes, err := s.githubExchange(r.Context(), q.Get("code"))
-	if err != nil {
-		s.log.Warn("github token exchange failed", "err", err)
-		fail("exchange", ws)
-		return
-	}
-	login, err := newGitHub(s.cfg.GitHub, token).login(r.Context())
-	if err != nil {
-		s.log.Warn("github user lookup failed", "err", err)
-		fail("exchange", ws)
-		return
-	}
-	if err := s.repo.SetIntegration(r.Context(), ws, githubProvider, u.ID, login, scopes, s.sealer.Seal(token, ws+"|"+githubProvider)); err != nil {
-		s.log.Error("store github token", "err", err)
-		fail("failed", ws)
-		return
-	}
-	http.Redirect(w, r, "/?github=connected#/s/"+url.PathEscape(ws), http.StatusSeeOther)
-}
-
-func (s *Server) githubExchange(ctx context.Context, code string) (token, scopes string, err error) {
-	g := s.cfg.GitHub
-	form := url.Values{"client_id": {g.ClientID}, "client_secret": {g.ClientSecret}, "code": {code}, "redirect_uri": {s.callbackURL()}}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, g.OAuthURL+"/login/oauth/access_token", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	var out struct {
-		AccessToken string `json:"access_token"`
-		Scope       string `json:"scope"`
-		Error       string `json:"error"`
-	}
-	_ = json.Unmarshal(raw, &out)
-	if resp.StatusCode != 200 || out.AccessToken == "" {
-		return "", "", fmt.Errorf("github answered %d %s", resp.StatusCode, out.Error)
-	}
-	return out.AccessToken, out.Scope, nil
-}
-
-func (s *Server) githubDisconnect(w http.ResponseWriter, r *http.Request, c wsCtx) {
-	_, enc, err := s.repo.Integration(r.Context(), c.WS, githubProvider)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	if err := s.repo.DeleteIntegration(r.Context(), c.WS, githubProvider); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	if enc != nil { // best effort: also revoke the grant at GitHub
-		if tok, err := s.sealer.Open(enc, c.WS+"|"+githubProvider); err == nil {
-			go s.githubRevoke(tok)
-		}
-	}
-	s.integrations(w, r, c)
-}
-
-func (s *Server) githubRevoke(token string) {
-	g := s.cfg.GitHub
-	if !g.Enabled() {
-		return
-	}
-	body, _ := json.Marshal(map[string]string{"access_token": token})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, g.APIURL+"/applications/"+url.PathEscape(g.ClientID)+"/grant", strings.NewReader(string(body)))
-	req.SetBasicAuth(g.ClientID, g.ClientSecret)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "agent-workflow")
-	if resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req); err == nil {
-		resp.Body.Close()
-	}
-}
-
-// ---------- GitHub API (read only) ----------
-
-type gitHub struct {
-	cfg   GitHubConfig
-	token string
-	http  *http.Client
-}
-
-func newGitHub(cfg GitHubConfig, token string) *gitHub {
-	return &gitHub{cfg: cfg, token: token, http: &http.Client{Timeout: 15 * time.Second}}
-}
-
-func (g *gitHub) get(ctx context.Context, path string, q url.Values) ([]byte, error) {
-	u := g.cfg.APIURL + path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+g.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "agent-workflow")
-	resp, err := g.http.Do(req)
-	if err != nil {
-		return nil, errors.New("could not reach GitHub")
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return nil, err
-	}
-	switch {
-	case resp.StatusCode == 401:
-		return nil, errors.New("GitHub rejected the stored token; an admin needs to reconnect GitHub")
-	case resp.StatusCode == 403 || resp.StatusCode == 429:
-		return nil, errors.New("GitHub refused the request (permissions or rate limit)")
-	case resp.StatusCode == 404:
-		return nil, errors.New("not found, or the connected account cannot see it")
-	case resp.StatusCode/100 != 2:
-		return nil, fmt.Errorf("GitHub returned %d", resp.StatusCode)
-	}
-	return raw, nil
-}
-
-func (g *gitHub) login(ctx context.Context) (string, error) {
-	raw, err := g.get(ctx, "/user", nil)
-	if err != nil {
-		return "", err
-	}
-	var u struct {
-		Login string `json:"login"`
-	}
-	if err := json.Unmarshal(raw, &u); err != nil || u.Login == "" {
-		return "", errors.New("GitHub did not say who this is")
-	}
-	return u.Login, nil
-}
-
 var (
 	ghName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
 	ghRef  = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,200}$`)
 )
-
-func cut(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "… [cut]"
-}
 
 type toolInput struct {
 	Owner  string `json:"owner"`
@@ -352,11 +57,6 @@ func (in toolInput) state() (string, error) {
 	return "", errors.New("state must be open, closed or all")
 }
 
-func compact(v any) string {
-	raw, _ := json.Marshal(v)
-	return string(raw)
-}
-
 func names(items []struct {
 	Name string `json:"name"`
 }) []string {
@@ -380,7 +80,7 @@ func schema(extra map[string]any, required ...string) map[string]any {
 	for k, v := range extra {
 		props[k] = v
 	}
-	return map[string]any{"type": "object", "properties": props, "required": append([]string{"owner", "repo"}, required...)}
+	return objSchema(props, append([]string{"owner", "repo"}, required...)...)
 }
 
 var stateProp = map[string]any{"type": "string", "enum": []string{"open", "closed", "all"}, "description": "Which to list (default open)"}
@@ -401,6 +101,22 @@ func githubTools() []ToolDef {
 }
 
 // run executes one tool call. Every reply is data for Claude to read, never an instruction.
+func githubRun(ctx context.Context, app OAuthApp, ts tokenSet, name string, raw json.RawMessage) (string, error) {
+	g := &gitHub{app: app, token: ts.Access}
+	return g.run(ctx, name, raw)
+}
+
+type gitHub struct {
+	app   OAuthApp
+	token string
+}
+
+func (g *gitHub) get(ctx context.Context, path string, q url.Values) ([]byte, error) {
+	return apiGet(ctx, "GitHub", g.app.APIURL, path, q, g.token, map[string]string{
+		"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "agent-workflow",
+	})
+}
+
 func (g *gitHub) run(ctx context.Context, name string, raw json.RawMessage) (string, error) {
 	var in toolInput
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -622,24 +338,44 @@ func (g *gitHub) run(ctx context.Context, name string, raw json.RawMessage) (str
 	return "", fmt.Errorf("unknown tool %q", name)
 }
 
-func hasTool(tools []string, want string) bool {
-	for _, t := range tools {
-		if strings.EqualFold(t, want) {
-			return true
-		}
+func githubProvider() *provider {
+	return &provider{
+		ID: "github", Label: "GitHub",
+		authorize: func(app OAuthApp, q url.Values) string {
+			q.Set("allow_signup", "false")
+			return app.AuthURL + "/login/oauth/authorize?" + q.Encode()
+		},
+		exchange: func(ctx context.Context, app OAuthApp, redirect, code string) (tokenResponse, error) {
+			return postToken(ctx, app.AuthURL+"/login/oauth/access_token", url.Values{
+				"client_id": {app.ClientID}, "client_secret": {app.ClientSecret}, "code": {code}, "redirect_uri": {redirect},
+			}, false, "", "")
+		},
+		identify: func(ctx context.Context, app OAuthApp, ts *tokenSet) (string, error) {
+			raw, err := (&gitHub{app: app, token: ts.Access}).get(ctx, "/user", nil)
+			if err != nil {
+				return "", err
+			}
+			var u struct {
+				Login string `json:"login"`
+			}
+			if json.Unmarshal(raw, &u) != nil || u.Login == "" {
+				return "", errors.New("GitHub did not say who this is")
+			}
+			return u.Login, nil
+		},
+		revoke: func(app OAuthApp, ts tokenSet) {
+			body, _ := json.Marshal(map[string]string{"access_token": ts.Access})
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, app.APIURL+"/applications/"+url.PathEscape(app.ClientID)+"/grant", bytes.NewReader(body))
+			req.SetBasicAuth(app.ClientID, app.ClientSecret)
+			req.Header.Set("Accept", "application/vnd.github+json")
+			req.Header.Set("User-Agent", "agent-workflow")
+			if resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req); err == nil {
+				resp.Body.Close()
+			}
+		},
+		tools: githubTools(),
+		run:   githubRun,
 	}
-	return false
-}
-
-// githubFor returns a client for the workspace's stored token, or nil when GitHub is not connected.
-func (s *Server) githubFor(ctx context.Context, wsID string) (*gitHub, error) {
-	_, enc, err := s.repo.Integration(ctx, wsID, githubProvider)
-	if err != nil || enc == nil {
-		return nil, err
-	}
-	tok, err := s.sealer.Open(enc, wsID+"|"+githubProvider)
-	if err != nil {
-		return nil, err
-	}
-	return newGitHub(s.cfg.GitHub, tok), nil
 }

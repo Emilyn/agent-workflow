@@ -7,13 +7,13 @@ import Side from './components/Side.jsx';
 import { hashFor, parseHash } from './route.js';
 import {
   ROLE_RANK,
+  LIVE_TOOLS,
   agentNode,
   allAgents,
   blankForm,
   findNode,
   fullName,
   insertStep,
-  integrationName,
   mergeMessages,
   patchNode,
   personNode,
@@ -44,7 +44,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [claude, setClaude] = useState(null);
-  const [github, setGithub] = useState(null);
+  const [ints, setInts] = useState(null); // connection status of GitHub, GitLab, Jira and Figma
 
   const dirty = useRef(false);
   const settingsDirty = useRef(false);
@@ -60,16 +60,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   busyRef.current = busy || !!thinking;
 
   // Components read one combined object: the workflow, the shared settings and the people.
-  // A real GitHub connection makes the GitHub tool available, whatever the placeholder flags say.
-  const view = useMemo(() => {
-    if (!doc || !settings) return null;
-    const live = !!github?.connected;
-    return {
-      ...doc, ...settings, members,
-      gitProvider: live ? 'github' : settings.gitProvider,
-      connected: { ...settings.connected, git: settings.connected.git || live },
-    };
-  }, [doc, settings, members, github]);
+  const view = useMemo(() => (doc && settings ? { ...doc, ...settings, members } : null), [doc, settings, members]);
 
   // ---------- loading ----------
   const show = useCallback((wf, { keepSelection = false, notice = '', replace = false } = {}) => {
@@ -139,13 +130,13 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     let cancelled = false;
     (async () => {
       try {
-        const [l, st, m, c, ints] = await Promise.all([api.listWorkflows(wsId), api.getSettings(wsId), api.members(wsId), api.claudeStatus(wsId), api.integrations(wsId)]);
+        const [l, st, m, c, connections] = await Promise.all([api.listWorkflows(wsId), api.getSettings(wsId), api.members(wsId), api.claudeStatus(wsId), api.integrations(wsId)]);
         if (cancelled) return;
         setList(l);
         setSettings(st);
         setMembers(m);
         setClaude(c);
-        setGithub(ints.github);
+        setInts(connections);
         const id = l.find((x) => x.id === wfFromUrl)?.id || l[0].id;
         const wf = await api.getWorkflow(wsId, id);
         if (!cancelled) show(wf, { replace: true });
@@ -157,24 +148,26 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsId]);
 
-  // Coming back from GitHub: ?github=connected or ?github=error&reason=...
+  // Coming back from a provider: ?integration=github&result=connected, or result=error&reason=...
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    const result = q.get('github');
-    if (!result) return;
+    const id = q.get('integration');
+    if (!id) return;
+    const label = LIVE_TOOLS.find((t) => t.id === id)?.label || 'the tool';
     const reasons = {
-      denied: 'GitHub access was not granted.',
-      expired: 'The GitHub sign-in took too long. Try again.',
-      state: 'The GitHub sign-in could not be verified. Try again from this browser.',
-      session: 'You were signed out while connecting GitHub. Sign in and try again.',
-      forbidden: 'Only workspace admins can connect GitHub.',
-      exchange: 'GitHub did not accept the sign-in. Try again.',
+      denied: `${label} access was not granted.`,
+      expired: `The ${label} sign-in took too long. Try again.`,
+      state: `The ${label} sign-in could not be verified. Try again from this browser.`,
+      session: `You were signed out while connecting ${label}. Sign in and try again.`,
+      forbidden: `Only workspace admins can connect ${label}.`,
+      exchange: `${label} did not accept the sign-in. Try again.`,
     };
+    const result = q.get('result');
     const reason = q.get('reason');
     window.history.replaceState(null, '', window.location.pathname + window.location.hash);
     setTab('integrations');
-    if (result === 'connected') api.integrations(wsId).then((r) => setGithub(r.github)).catch(() => {});
-    else setError(reasons[reason] || 'Could not connect GitHub.');
+    if (result === 'connected') api.integrations(wsId).then(setInts).catch(() => {});
+    else setError(reasons[reason] || `Could not connect ${label}.`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -365,29 +358,19 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     setFormError('');
   };
 
-  const toggleIntegration = (key) => {
-    const on = !settings.connected[key];
-    updateSettings((st) => ({ ...st, connected: { ...st.connected, [key]: on } }));
-    if (on) {
-      const name = integrationName(view, key);
-      note(`${name} is marked as connected for the whole workspace. This is a placeholder: agents cannot reach ${name} until real sign-in is added.`);
-    }
-  };
-
   const connectClaude = async (apiKey) => {
     const status = await api.connectClaude(wsId, apiKey); // throws with a readable message if rejected
     setClaude(status);
     note('Claude is connected with the workspace’s API key. Agent steps and replies now run for real.');
   };
 
-  const connectGithub = async () => {
-    const { url } = await api.githubStart(wsId); // GitHub asks for consent, then sends the browser back here
+  const connectTool = async (id) => {
+    const { url } = await api.integrationStart(wsId, id); // the provider asks for consent, then sends the browser back here
     window.location.href = url;
   };
 
-  const disconnectGithub = async () => {
-    const r = await api.githubDisconnect(wsId);
-    setGithub(r.github);
+  const disconnectTool = async (id) => {
+    setInts(await api.integrationDisconnect(wsId, id));
   };
 
   const disconnectClaude = async () => {
@@ -562,6 +545,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           me={{ id: user.id, name: user.name }}
           chat={{ draft, thinking, onDraft: setDraft, onSend: sendMessage }}
           settings={{
+            ints,
+            onGoIntegrations: () => setTab('integrations'),
             onEdit: (id, patch) => update((d) => patchNode(d, id, patch)),
             onRemove: removeSelected,
             onDiscuss: (n) => {
@@ -574,13 +559,12 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
             canManage,
             onConnectClaude: connectClaude,
             onDisconnectClaude: disconnectClaude,
-            github,
-            onConnectGithub: connectGithub,
-            onDisconnectGithub: disconnectGithub,
-            onProvider: (p) => updateSettings((st) => ({ ...st, gitProvider: p })),
-            onToggle: toggleIntegration,
+            ints,
+            onConnect: connectTool,
+            onDisconnect: disconnectTool,
           }}
           builder={{
+            ints,
             form,
             error: formError,
             onChange: (patch) => {

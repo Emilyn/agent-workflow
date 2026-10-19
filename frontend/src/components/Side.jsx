@@ -23,7 +23,7 @@ export default function Side({ tab, onTab, doc, node, me, chat, settings, integr
       {tab === 'settings' && <SettingsPanel doc={doc} node={node} {...settings} />}
       {tab === 'integrations' && <IntegrationsPanel doc={doc} {...integrations} />}
       {tab === 'team' && <TeamPanel me={me} {...team} />}
-      {tab === 'agent' && <BuilderPanel doc={doc} {...builder} />}
+      {tab === 'agent' && <BuilderPanel {...builder} />}
     </aside>
   );
 }

@@ -22,20 +22,30 @@ type Config struct {
 	CookieSecure bool
 	TrustProxy   bool
 	AllowSignup  bool
-	PublicURL    string // where browsers reach this app; OAuth callbacks are built from it
-	GitHub       GitHubConfig
+	PublicURL    string              // where browsers reach this app; OAuth callbacks are built from it
+	Apps         map[string]OAuthApp // keyed by provider id: github, gitlab, jira, figma
 }
 
-// GitHubConfig describes the GitHub OAuth app. Leave ClientID empty to turn the integration off.
-type GitHubConfig struct {
+// OAuthApp is the server's OAuth app for one provider. Leave ClientID empty to turn the provider off.
+type OAuthApp struct {
 	ClientID     string
 	ClientSecret string
 	Scopes       string
-	OAuthURL     string // https://github.com
-	APIURL       string // https://api.github.com
+	AuthURL      string // where browsers authorise and tokens are exchanged (provider specific paths are added)
+	APIURL       string // base of the provider's REST API
 }
 
-func (g GitHubConfig) Enabled() bool { return g.ClientID != "" && g.ClientSecret != "" }
+func (a OAuthApp) Enabled() bool { return a.ClientID != "" && a.ClientSecret != "" }
+
+func loadApp(prefix, scopes, authURL, apiURL string) OAuthApp {
+	return OAuthApp{
+		ClientID:     os.Getenv(prefix + "_CLIENT_ID"),
+		ClientSecret: os.Getenv(prefix + "_CLIENT_SECRET"),
+		Scopes:       envOr(prefix+"_SCOPES", scopes),
+		AuthURL:      strings.TrimRight(authURL, "/"),
+		APIURL:       strings.TrimRight(apiURL, "/"),
+	}
+}
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -68,12 +78,11 @@ func LoadConfig() (Config, error) {
 		AllowSignup:  envBool("ALLOW_SIGNUP", true),
 		DBMaxConns:   20,
 		PublicURL:    strings.TrimRight(envOr("PUBLIC_URL", "http://localhost:"+envOr("PORT", "8080")), "/"),
-		GitHub: GitHubConfig{
-			ClientID:     os.Getenv("GITHUB_CLIENT_ID"),
-			ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-			Scopes:       envOr("GITHUB_SCOPES", "public_repo read:user"),
-			OAuthURL:     strings.TrimRight(envOr("GITHUB_OAUTH_URL", "https://github.com"), "/"),
-			APIURL:       strings.TrimRight(envOr("GITHUB_API_URL", "https://api.github.com"), "/"),
+		Apps: map[string]OAuthApp{
+			"github": loadApp("GITHUB", "public_repo read:user", envOr("GITHUB_OAUTH_URL", "https://github.com"), envOr("GITHUB_API_URL", "https://api.github.com")),
+			"gitlab": loadApp("GITLAB", "read_api read_user", envOr("GITLAB_URL", "https://gitlab.com"), strings.TrimRight(envOr("GITLAB_URL", "https://gitlab.com"), "/")+"/api/v4"),
+			"jira":   loadApp("JIRA", "read:jira-work read:jira-user offline_access", envOr("JIRA_AUTH_URL", "https://auth.atlassian.com"), envOr("JIRA_API_URL", "https://api.atlassian.com")),
+			"figma":  loadApp("FIGMA", "current_user:read file_content:read file_comments:read", envOr("FIGMA_AUTH_URL", "https://www.figma.com"), envOr("FIGMA_API_URL", "https://api.figma.com")),
 		},
 	}
 	if c.DatabaseURL == "" {

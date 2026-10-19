@@ -60,8 +60,8 @@ export const api = {
   connectClaude: (ws, apiKey) => request('PUT', `${w(ws)}/claude/key`, { apiKey }),
   disconnectClaude: (ws) => request('DELETE', `${w(ws)}/claude/key`),
   integrations: (ws) => request('GET', `${w(ws)}/integrations`),
-  githubStart: (ws) => request('POST', `${w(ws)}/integrations/github/start`, {}),
-  githubDisconnect: (ws) => request('DELETE', `${w(ws)}/integrations/github`),
+  integrationStart: (ws, id) => request('POST', `${w(ws)}/integrations/${id}/start`, {}),
+  integrationDisconnect: (ws, id) => request('DELETE', `${w(ws)}/integrations/${id}`),
   getSettings: (ws) => request('GET', `${w(ws)}/settings`),
   saveSettings: (ws, s) => request('PUT', `${w(ws)}/settings`, s),
 

@@ -25,4 +25,4 @@ export const Figma = ({ size = 20 }) => (
   <svg {...base(size)} strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" /></svg>
 );
 
-export const INTEGRATION_ICON = { git: Git, jira: Jira, figma: Figma };
+export const INTEGRATION_ICON = { github: Git, gitlab: Git, jira: Jira, figma: Figma };

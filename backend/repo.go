@@ -749,3 +749,33 @@ func (r *Repo) DeleteIntegration(ctx context.Context, wsID, provider string) err
 	_, err := r.db.ExecContext(ctx, `DELETE FROM integration_tokens WHERE workspace_id = $1 AND provider = $2`, wsID, provider)
 	return err
 }
+
+// LockIntegration runs fn with the stored token row locked, so two requests (or two server
+// instances) never refresh the same rotating refresh token at once. fn gets the current
+// ciphertext and returns replacement ciphertext, or nil to keep it. It returns what is stored afterwards.
+func (r *Repo) LockIntegration(ctx context.Context, wsID, provider string, fn func(enc []byte) ([]byte, error)) ([]byte, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var enc []byte
+	err = tx.QueryRowContext(ctx, `SELECT token_enc FROM integration_tokens WHERE workspace_id = $1 AND provider = $2 FOR UPDATE`, wsID, provider).Scan(&enc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	next, err := fn(enc)
+	if err != nil {
+		return nil, err
+	}
+	if next != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE integration_tokens SET token_enc = $3 WHERE workspace_id = $1 AND provider = $2`, wsID, provider, next); err != nil {
+			return nil, err
+		}
+		enc = next
+	}
+	return enc, tx.Commit()
+}
