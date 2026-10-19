@@ -3,6 +3,7 @@
 Build workflows out of AI agents and people, and talk to the team (and the agents) while you build. Teams sign in, share workspaces, and every workspace has its own workflows, chat, agents and Claude API key.
 
 - **Accounts and teams:** email and password sign-up, workspaces with owner / admin / member roles, one-time invite links.
+- **Settings page:** Claude key, tool connections, review triggers and the team live on a page of their own (Settings in the top bar), so the side panel stays for chat, step settings and runs.
 - **Multiple workflows** per workspace: create (blank, example or a copy), rename, duplicate, delete. The open one is in the URL.
 - **Canvas:** each step is an agent, a person or a trigger. People steps are assigned to real teammates.
 - **Create agents:** name, role, instructions, tools, model. Add one with a click, or `@mention` it in chat.
@@ -78,7 +79,7 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 
 1. Create an OAuth app at the service and set its callback URL to `PUBLIC_URL/api/integrations/<provider>/callback` (`github`, `gitlab`, `jira` or `figma`).
 2. Put its client id and secret in the matching `…_CLIENT_ID` and `…_CLIENT_SECRET`, and set `PUBLIC_URL`.
-3. An admin opens **Integrations**, chooses **Connect …** and approves on the service's own page. The sign-in is encrypted like the Claude key (bound to the workspace) and never sent to the browser.
+3. An admin opens **Settings → Integrations** (the Settings button in the top bar), chooses **Connect …** and approves on the service's own page. The sign-in is encrypted like the Claude key (bound to the workspace) and never sent to the browser.
 4. Give a step the tool: select the step, then **Step settings → Tools and sources**. When it runs, Claude can call that service's read-only tools, and the step's output lists which were used.
 
 | Service | Default scopes | Where to create the app | Read-only tools |
@@ -101,17 +102,17 @@ How it is kept safe:
 
 A workflow can start by itself for every new pull request (GitHub) or merge request (GitLab), read the changes, and write a review.
 
-1. Connect the service under **Integrations** (see above) and set `PUBLIC_URL` to an address the service can reach. On a laptop, use a tunnel (for example `cloudflared tunnel` or `ngrok`) and set `PUBLIC_URL` to its address.
+1. Connect the service under **Settings → Integrations** (see above) and set `PUBLIC_URL` to an address the service can reach. On a laptop, use a tunnel (for example `cloudflared tunnel` or `ngrok`) and set `PUBLIC_URL` to its address.
 2. Create a workflow from the **Code review** template, or give any agent step the GitHub or GitLab tool.
-3. Open the **Runs** tab, then **Add a trigger**: choose the service, the project (`owner/repo` or `group/project`), and what happens with the review.
+3. Open **Settings → Review triggers** and **Add a trigger**: choose the workflow to start, the service, the project (`owner/repo` or `group/project`), and what happens with the review.
 4. The app tries to register the webhook itself. If that is refused (for example, the token lacks rights), the trigger shows the payload URL and secret to add by hand: GitHub → Settings → Webhooks (JSON, "Pull requests" events); GitLab → Settings → Webhooks (secret token, "Merge request events").
-5. **Try it on one request** in the same tab starts a run on any pull or merge request without waiting for a webhook, which is the easiest way to test.
+5. **Review one request now** in the workflow's **Runs** tab starts a run on any pull or merge request without waiting for a webhook, which is the easiest way to test.
 
 How a run works:
 
 - A background worker picks up queued runs (so a restart or a slow model does not lose them), runs the agent steps in order, and skips steps assigned to a person. Failed runs are retried up to 3 times; a busy Claude is retried after 30 seconds.
 - The agent reads the diff with the diff tool and finishes with the `post_review` tool: a summary plus up to 20 inline comments on changed lines. It cannot choose where to post: the tool is bound to the one pull or merge request that started the run, and works once per run.
-- **Draft mode (default):** the review is saved and a teammate sees it in the Runs tab, then picks **Approve and post** or **Discard**. **Post mode** (admin choice per trigger) posts straight away. Manual runs always make drafts.
+- **Draft mode (default):** the review is saved and a teammate sees it in the workflow's Runs tab, then picks **Approve and post** or **Discard**. **Post mode** (admin choice per trigger) posts straight away. Manual runs always make drafts.
 - GitHub gets one review with the inline comments. GitLab gets one discussion per inline comment plus a summary note. Comments that cannot be placed on the diff are folded into the summary instead of being lost.
 - Reviews are posted as the account that connected the service, with a footer saying the review is automatic. Use a dedicated bot account for that.
 

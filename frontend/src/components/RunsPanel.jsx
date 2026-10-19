@@ -1,78 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-const REVIEW_HOSTS = [
-  { id: 'github', label: 'GitHub', example: 'owner/repo', word: 'pull request' },
-  { id: 'gitlab', label: 'GitLab', example: 'group/project', word: 'merge request' },
-];
+import { REVIEW_HOSTS } from './reviewHosts.js';
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : '');
 const pillFor = (status) => ({ done: 'done', running: 'running', queued: 'queued', failed: 'waiting' }[status] || 'queued');
-
-function copy(text) {
-  try {
-    navigator.clipboard?.writeText(text);
-  } catch {
-    /* clipboard may be blocked; the value is visible anyway */
-  }
-}
-
-function ReadOnlyValue({ label, value }) {
-  return (
-    <div className="col g6">
-      <span className="lbl">{label}</span>
-      <div className="row g8">
-        <input className="field" readOnly aria-label={label} value={value} onFocus={(e) => e.target.select()} />
-        <button type="button" className="btn" onClick={() => copy(value)}>Copy</button>
-      </div>
-    </div>
-  );
-}
-
-function TriggerCard({ t, canManage, onChange, onDelete }) {
-  const host = REVIEW_HOSTS.find((h) => h.id === t.provider);
-  const registered = t.hookStatus === 'registered';
-  return (
-    <div className="runcard" data-testid="trigger-card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div className="row g8" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div className="col" style={{ minWidth: 0 }}>
-          <strong style={{ fontSize: 14, overflowWrap: 'anywhere' }}>{t.project}</strong>
-          <span className="small muted">{host.label} · new {host.word}s{t.onPush ? ' and pushes' : ''}</span>
-        </div>
-        <span className={`pill ${t.enabled ? 'done' : 'queued'}`}>{t.enabled ? 'On' : 'Off'}</span>
-      </div>
-      <div className="run-meta">
-        <span>{t.reviewMode === 'draft' ? 'Reviews wait for approval' : 'Reviews post straight away'}</span>
-        <span className={registered ? '' : 'alert'}>{registered ? 'Webhook registered' : 'Webhook needs adding by hand'}</span>
-      </div>
-      {!registered && t.hookError && <span className="small muted">Reason: {t.hookError}</span>}
-      {canManage && (
-        <>
-          <details className="disclose">
-            <summary>Webhook details</summary>
-            <div className="inner">
-              <ReadOnlyValue label="Payload URL" value={t.webhookUrl || ''} />
-              <ReadOnlyValue label="Secret" value={t.secret || ''} />
-              <span className="small muted">
-                {t.provider === 'github'
-                  ? 'GitHub: repository Settings → Webhooks → Add webhook. Content type application/json, event "Pull requests".'
-                  : 'GitLab: project Settings → Webhooks. Put the secret in "Secret token" and tick "Merge request events".'}{' '}
-                The address must be reachable from {host.label}.
-              </span>
-            </div>
-          </details>
-          <div className="row wrap g8">
-            <button type="button" className="btn sm" onClick={() => onChange(t.id, { enabled: !t.enabled })}>{t.enabled ? 'Switch off' : 'Switch on'}</button>
-            <button type="button" className="btn sm" onClick={() => onChange(t.id, { reviewMode: t.reviewMode === 'draft' ? 'post' : 'draft' })}>
-              {t.reviewMode === 'draft' ? 'Post directly' : 'Save as drafts'}
-            </button>
-            <button type="button" className="btn sm danger" onClick={() => onDelete(t)}>Remove</button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 function ActionCard({ a, onApprove, onDiscard, busy }) {
   return (
@@ -146,22 +78,19 @@ function RunCard({ run, onRerun, onApprove, onDiscard, busyAction }) {
   );
 }
 
-export default function RunsPanel({ wsId, wfId, canManage, ints, onGoIntegrations }) {
-  const [triggers, setTriggers] = useState([]);
+export default function RunsPanel({ wsId, wfId, ints, onGoIntegrations, onManageTriggers }) {
+  const [triggerCount, setTriggerCount] = useState(0);
   const [runs, setRuns] = useState([]);
   const [error, setError] = useState('');
   const [busyAction, setBusyAction] = useState('');
   const connected = REVIEW_HOSTS.filter((h) => ints?.[h.id]?.connected);
-
-  const [form, setForm] = useState({ provider: 'github', project: '', reviewMode: 'draft', onPush: false });
   const [manual, setManual] = useState({ provider: 'github', project: '', number: '' });
   const [working, setWorking] = useState('');
-  const [view, setView] = useState('activity');
 
   const load = useCallback(async () => {
     try {
       const [t, r] = await Promise.all([api.triggers(wsId), api.runs(wsId, wfId)]);
-      setTriggers(t.filter((x) => x.workflowId === wfId));
+      setTriggerCount(t.filter((x) => x.workflowId === wfId && x.enabled).length);
       setRuns(r);
     } catch (e) {
       if (e.status !== 401) setError(e.message);
@@ -176,7 +105,6 @@ export default function RunsPanel({ wsId, wfId, canManage, ints, onGoIntegration
 
   // keep the provider choice on something that is connected
   useEffect(() => {
-    if (connected.length && !connected.some((h) => h.id === form.provider)) setForm((f) => ({ ...f, provider: connected[0].id }));
     if (connected.length && !connected.some((h) => h.id === manual.provider)) setManual((m) => ({ ...m, provider: connected[0].id }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ints]);
@@ -192,16 +120,6 @@ export default function RunsPanel({ wsId, wfId, canManage, ints, onGoIntegration
     }
     setWorking('');
   };
-
-  const addTrigger = guard('trigger', async (e) => {
-    e.preventDefault();
-    await api.createTrigger(wsId, { workflowId: wfId, ...form });
-    setForm((f) => ({ ...f, project: '' }));
-  });
-  const changeTrigger = guard('trigger', (id, body) => api.patchTrigger(wsId, id, body));
-  const removeTrigger = guard('trigger', async (t) => {
-    if (window.confirm(`Stop reviewing ${t.project}? The webhook is removed at ${t.provider === 'github' ? 'GitHub' : 'GitLab'} when possible.`)) await api.deleteTrigger(wsId, t.id);
-  });
   const startManual = guard('manual', async (e) => {
     e.preventDefault();
     await api.startRun(wsId, wfId, { provider: manual.provider, project: manual.project, number: Number(manual.number) });
@@ -230,102 +148,46 @@ export default function RunsPanel({ wsId, wfId, canManage, ints, onGoIntegration
   };
 
   const hostOf = (id) => REVIEW_HOSTS.find((h) => h.id === id);
-  const waiting = runs.filter((r) => r.actions.some((x) => x.status === 'pending')).length;
-
   return (
-    <>
-      <div className="subnav" role="tablist" aria-label="Runs sections">
-        <button type="button" role="tab" aria-selected={view === 'activity'} className={view === 'activity' ? 'on' : ''} onClick={() => setView('activity')}>
-          Activity{waiting > 0 && <span className="count" aria-label={`${waiting} drafts waiting`}>{waiting}</span>}
-        </button>
-        <button type="button" role="tab" aria-selected={view === 'triggers'} className={view === 'triggers' ? 'on' : ''} onClick={() => setView('triggers')}>
-          Triggers{triggers.length > 0 && <span className="count" style={{ background: 'var(--muted)' }}>{triggers.length}</span>}
-        </button>
+    <div className="panel tight">
+      {error && <span className="alert" role="alert">{error}</span>}
+      <div className="row g8" style={{ justifyContent: 'space-between' }}>
+        <span className="small muted">
+          {triggerCount > 0 ? `${triggerCount} trigger${triggerCount === 1 ? '' : 's'} watching for new requests.` : 'No triggers start this workflow yet.'}
+        </span>
+        <button type="button" className="btn sm" onClick={onManageTriggers}>Manage triggers</button>
       </div>
-      <div className="panel tight">
-        {error && <span className="alert" role="alert">{error}</span>}
 
-        {connected.length === 0 && (
-          <div className="empty">
-            <span>Connect GitHub or GitLab, then give the reviewing step that tool.</span>
-            <button type="button" className="btn sm" onClick={onGoIntegrations}>Open Integrations</button>
-          </div>
-        )}
-
-        {view === 'activity' && (
-          <>
-            <span className="small muted">Every new pull or merge request that a trigger watches shows up here. A person approves each review before it is posted.</span>
-            {connected.length > 0 && (
-              <details className="disclose">
-                <summary>Review one request now</summary>
-                <form className="inner" onSubmit={startManual} aria-label="Review one now">
-                  <div className="row g8">
-                    <select className="field" aria-label="Service" style={{ flex: '0 0 110px', height: 44 }} value={manual.provider} onChange={(e) => setManual({ ...manual, provider: e.target.value })}>
-                      {connected.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}
-                    </select>
-                    <input className="field" aria-label="Number" required inputMode="numeric" pattern="[0-9]+" style={{ flex: '0 0 84px', height: 44 }} placeholder="#" value={manual.number} onChange={(e) => setManual({ ...manual, number: e.target.value })} />
-                  </div>
-                  <input className="field" aria-label="Project" required style={{ height: 44 }} placeholder={hostOf(manual.provider)?.example} value={manual.project} onChange={(e) => setManual({ ...manual, project: e.target.value })} />
-                  <button type="submit" className="btn sm primary" style={{ alignSelf: 'flex-start' }} disabled={working === 'manual'}>{working === 'manual' ? 'Starting…' : 'Review it now'}</button>
-                  <span className="small muted">Manual runs always save a draft.</span>
-                </form>
-              </details>
-            )}
-            <div className="sect">
-              <div className="sect-head"><span className="lbl-s">Recent runs</span></div>
-              {runs.length === 0 ? (
-                <div className="empty">
-                  <span>Nothing has run yet.</span>
-                  {connected.length > 0 && triggers.length === 0 && <button type="button" className="btn sm" onClick={() => setView('triggers')}>Add a trigger</button>}
-                </div>
-              ) : (
-                runs.map((r) => <RunCard key={r.id} run={r} onRerun={rerun} onApprove={approve} onDiscard={discard} busyAction={busyAction} />)
-              )}
+      {connected.length === 0 ? (
+        <div className="empty">
+          <span>Connect GitHub or GitLab, then give the reviewing step that tool.</span>
+          <button type="button" className="btn sm" onClick={onGoIntegrations}>Open Integrations</button>
+        </div>
+      ) : (
+        <details className="disclose">
+          <summary>Review one request now</summary>
+          <form className="inner" onSubmit={startManual} aria-label="Review one now">
+            <div className="row g8">
+              <select className="field" aria-label="Service" style={{ flex: '0 0 110px', height: 44 }} value={manual.provider} onChange={(e) => setManual({ ...manual, provider: e.target.value })}>
+                {connected.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}
+              </select>
+              <input className="field" aria-label="Number" required inputMode="numeric" pattern="[0-9]+" style={{ flex: '0 0 84px', height: 44 }} placeholder="#" value={manual.number} onChange={(e) => setManual({ ...manual, number: e.target.value })} />
             </div>
-          </>
-        )}
+            <input className="field" aria-label="Project" required style={{ height: 44 }} placeholder={hostOf(manual.provider)?.example} value={manual.project} onChange={(e) => setManual({ ...manual, project: e.target.value })} />
+            <button type="submit" className="btn sm primary" style={{ alignSelf: 'flex-start' }} disabled={working === 'manual'}>{working === 'manual' ? 'Starting…' : 'Review it now'}</button>
+            <span className="small muted">Manual runs always save a draft.</span>
+          </form>
+        </details>
+      )}
 
-        {view === 'triggers' && (
-          <>
-            <span className="small muted">A trigger starts this workflow for every new pull or merge request in one project.</span>
-            <div className="sect">
-              {triggers.length === 0 && connected.length > 0 && <div className="empty">No triggers yet.</div>}
-              {triggers.map((t) => <TriggerCard key={t.id} t={t} canManage={canManage} onChange={changeTrigger} onDelete={removeTrigger} />)}
-            </div>
-            {connected.length > 0 && (canManage ? (
-              <details className="disclose" open={triggers.length === 0}>
-                <summary>Add a trigger</summary>
-                <form className="inner" onSubmit={addTrigger} aria-label="Add a trigger">
-                  <label className="col g6">
-                    <span className="small">Service</span>
-                    <select className="field" style={{ height: 44 }} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
-                      {connected.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}
-                    </select>
-                  </label>
-                  <label className="col g6">
-                    <span className="small">Project</span>
-                    <input className="field" style={{ height: 44 }} required placeholder={hostOf(form.provider)?.example} value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })} />
-                  </label>
-                  <label className="col g6">
-                    <span className="small">What happens with the review</span>
-                    <select className="field" style={{ height: 44 }} value={form.reviewMode} onChange={(e) => setForm({ ...form, reviewMode: e.target.value })}>
-                      <option value="draft">Save a draft for approval (recommended)</option>
-                      <option value="post">Post it straight away</option>
-                    </select>
-                  </label>
-                  <label className="row g8">
-                    <input type="checkbox" checked={form.onPush} onChange={(e) => setForm({ ...form, onPush: e.target.checked })} />
-                    <span className="small">Review again when new commits are pushed</span>
-                  </label>
-                  <button type="submit" className="btn sm primary" style={{ alignSelf: 'flex-start' }} disabled={working === 'trigger'}>{working === 'trigger' ? 'Adding…' : 'Add trigger'}</button>
-                </form>
-              </details>
-            ) : (
-              <span className="small muted">Only workspace admins can add triggers.</span>
-            ))}
-          </>
+      <div className="sect">
+        <div className="sect-head"><span className="lbl-s">Recent runs</span></div>
+        {runs.length === 0 ? (
+          <div className="empty"><span>Nothing has run yet. A person approves each review before it is posted.</span></div>
+        ) : (
+          runs.map((r) => <RunCard key={r.id} run={r} onRerun={rerun} onApprove={approve} onDiscard={discard} busyAction={busyAction} />)
         )}
       </div>
-    </>
+    </div>
   );
 }

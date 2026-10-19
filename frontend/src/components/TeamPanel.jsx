@@ -55,12 +55,9 @@ export default function TeamPanel({ wsId, wsName, me, role, members, onMembers, 
 
   return (
     <div className="panel">
-      <div className="col g6">
-        <span className="serif" style={{ fontSize: 28 }}>Team</span>
-        <span className="small" style={{ color: 'var(--ink-2)' }}>
-          Everyone here sees every workflow in <strong>{wsName}</strong> and can edit, chat and run them.
-        </span>
-      </div>
+      <span className="settings-lead">
+        Everyone here sees every workflow in <strong>{wsName}</strong> and can edit, chat and run them.
+      </span>
       {error && <div className="alert" role="alert">{error}</div>}
 
       <ul className="people" aria-label="Members">

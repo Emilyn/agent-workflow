@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ROLE_LABEL } from '../workflow.js';
 
 // The workspace name in the header: switch workspace, create one, open the team tab, sign out.
-export default function WorkspaceMenu({ current, workspaces, user, disabled, onSwitch, onCreate, onTeam, onSignOut }) {
+export default function WorkspaceMenu({ current, workspaces, user, disabled, onSwitch, onCreate, onTeam, onSettings, onSignOut }) {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -61,6 +61,7 @@ export default function WorkspaceMenu({ current, workspaces, user, disabled, onS
             <div className="menu-actions">
               <button type="button" className="btn" onClick={() => { setAdding(true); setName(''); }}>New workspace</button>
               <button type="button" className="btn" onClick={() => { close(); onTeam(); }}>Team and members</button>
+              <button type="button" className="btn" onClick={() => { close(); onSettings(); }}>Settings</button>
             </div>
           )}
           <div className="menu-foot small">

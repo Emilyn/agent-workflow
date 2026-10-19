@@ -6,7 +6,7 @@ import { personStyle } from '../workflow.js';
 const SAVE_LABEL = { saved: 'Saved', saving: 'Saving…', error: 'Not saved' };
 const MAX_AVATARS = 4;
 
-export default function Header({ current, switcher, workspaceMenu, members, saveState, runLabel, busy, onAdvance, onShare }) {
+export default function Header({ current, switcher, workspaceMenu, members, saveState, runLabel, busy, onAdvance, onShare, onSettings }) {
   const shown = members.slice(0, MAX_AVATARS);
   const extra = members.length - shown.length;
   return (
@@ -31,6 +31,7 @@ export default function Header({ current, switcher, workspaceMenu, members, save
           <span className="avatar agent" title="Claude"><Spark size={16} /></span>
         </div>
         <button className="btn" type="button" onClick={onShare}>Invite</button>
+        <button className="btn" type="button" onClick={onSettings}>Settings</button>
         <button className="btn primary" type="button" onClick={onAdvance} disabled={busy}>
           <Play /> <span>{runLabel}</span>
         </button>

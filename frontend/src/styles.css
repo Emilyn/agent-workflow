@@ -149,7 +149,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .sect { display: flex; flex-direction: column; gap: 10px; }
 .sect-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .empty { padding: 20px 16px; border: 1px dashed var(--line-2); border-radius: 12px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.5; display: flex; flex-direction: column; gap: 10px; align-items: center; }
-.btn.sm { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
+.btn.sm { white-space: nowrap; height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
 .disclose { border: 1px solid var(--line-2); border-radius: 12px; background: var(--paper); }
 .disclose > summary { list-style: none; cursor: pointer; min-height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; font-size: 14px; font-weight: 600; }
 .disclose > summary::-webkit-details-marker { display: none; }
@@ -167,3 +167,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .run-body .output { background: var(--card); max-height: 220px; font-size: 13px; }
 .kv { display: flex; flex-direction: column; gap: 4px; }
 .lbl-s { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+
+/* settings page */
+.settings { flex: 1; display: flex; flex-wrap: wrap; align-items: stretch; background: var(--paper); }
+.settings-nav { flex: 0 0 260px; padding: 24px 16px; display: flex; flex-direction: column; gap: 16px; background: var(--paper-2); border-right: 1px solid var(--line); }
+.snav { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 10px 12px; min-height: 56px; border: 1px solid transparent; border-radius: 12px; background: transparent; font-size: 15px; font-weight: 600; color: var(--ink); }
+.snav:hover { background: var(--card); }
+.snav.on { background: var(--card); border-color: var(--line-2); box-shadow: 0 1px 2px rgba(20, 20, 19, 0.06); }
+.snav:focus-visible { outline: 3px solid #7A9CC6; outline-offset: 2px; }
+.settings-main { flex: 1 1 420px; min-width: 0; max-width: 820px; padding: 32px 40px 64px; display: flex; flex-direction: column; gap: 18px; }
+.settings-main .panel { padding: 0; overflow: visible; }
+.settings-lead { font-size: 15px; line-height: 1.55; color: var(--ink-2); max-width: 62ch; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+@media (max-width: 720px) { .settings-nav { flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--line); } .settings-main { padding: 24px 16px 48px; } }

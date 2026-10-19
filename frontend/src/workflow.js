@@ -37,8 +37,8 @@ export const PERSON_STEPS = [
 
 // Tools that connect to a real account. The id matches the server's provider id.
 export const LIVE_TOOLS = [
-  { id: 'github', label: 'GitHub', desc: 'Let agents read repositories, issues, pull requests, commits and files. Read only.' },
-  { id: 'gitlab', label: 'GitLab', desc: 'Let agents read projects, issues, merge requests, commits and files. Read only.' },
+  { id: 'github', label: 'GitHub', desc: 'Let agents read repositories, issues, pull requests, commits and files. The only write is a code review that a person approves.' },
+  { id: 'gitlab', label: 'GitLab', desc: 'Let agents read projects, issues, merge requests, commits and files. The only write is a code review that a person approves.' },
   { id: 'jira', label: 'Jira', desc: 'Let agents search and read Jira issues and projects. Read only.' },
   { id: 'figma', label: 'Figma', desc: 'Let agents read file structure, text in frames and comments. Read only.' },
 ];

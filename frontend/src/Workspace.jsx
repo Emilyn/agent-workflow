@@ -4,7 +4,8 @@ import Canvas from './components/Canvas.jsx';
 import Header from './components/Header.jsx';
 import Palette from './components/Palette.jsx';
 import Side from './components/Side.jsx';
-import { hashFor, parseHash } from './route.js';
+import SettingsPage from './components/SettingsPage.jsx';
+import { hashFor, parseHash, settingsHash } from './route.js';
 import {
   ROLE_RANK,
   LIVE_TOOLS,
@@ -35,6 +36,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const [list, setList] = useState([]);
   const [selected, setSelected] = useState(null);
   const [tab, setTab] = useState('chat');
+  const [page, setPage] = useState(() => (parseHash().page === 'settings' ? 'settings' : 'editor'));
+  const [section, setSection] = useState(() => parseHash().section || 'claude');
   const [form, setForm] = useState(blankForm());
   const [formError, setFormError] = useState('');
   const [draft, setDraft] = useState('');
@@ -55,12 +58,28 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const version = useRef(0);
   const lastMsg = useRef(0);
   const saveChain = useRef(Promise.resolve());
+  const pageRef = useRef(page);
   docRef.current = doc;
+  pageRef.current = page;
   settingsRef.current = settings;
   busyRef.current = busy || !!thinking;
 
   // Components read one combined object: the workflow, the shared settings and the people.
   const view = useMemo(() => (doc && settings ? { ...doc, ...settings, members } : null), [doc, settings, members]);
+
+  const openSettings = useCallback((sec, { replace = false } = {}) => {
+    const next = sec || 'claude';
+    pageRef.current = 'settings';
+    setPage('settings');
+    setSection(next);
+    const want = settingsHash(wsId, next);
+    if (window.location.hash !== want) window.history[replace ? 'replaceState' : 'pushState'](null, '', want);
+  }, [wsId]);
+  const closeSettings = useCallback(() => {
+    pageRef.current = 'editor';
+    setPage('editor');
+    if (docRef.current) window.history.pushState(null, '', hashFor(wsId, docRef.current.id));
+  }, [wsId]);
 
   // ---------- loading ----------
   const show = useCallback((wf, { keepSelection = false, notice = '', replace = false } = {}) => {
@@ -71,8 +90,15 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     setSelected((cur) => (keepSelection && findNode(wf.steps, cur) ? cur : wf.steps[0][0].id));
     if (!keepSelection) setDraft('');
     setError(notice);
-    const want = hashFor(wsId, wf.id);
-    if (window.location.hash !== want) window.history[replace ? 'replaceState' : 'pushState'](null, '', want);
+    // opening a workflow leaves the settings page, except for the first load of a settings link
+    if (pageRef.current === 'settings' && !replace) {
+      pageRef.current = 'editor';
+      setPage('editor');
+    }
+    if (pageRef.current !== 'settings') {
+      const want = hashFor(wsId, wf.id);
+      if (window.location.hash !== want) window.history[replace ? 'replaceState' : 'pushState'](null, '', want);
+    }
   }, [wsId]);
 
   const persistDoc = useCallback(() => {
@@ -165,7 +191,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     const result = q.get('result');
     const reason = q.get('reason');
     window.history.replaceState(null, '', window.location.pathname + window.location.hash);
-    setTab('integrations');
+    openSettings('integrations', { replace: true });
     if (result === 'connected') api.integrations(wsId).then(setInts).catch(() => {});
     else setError(reasons[reason] || `Could not connect ${label}.`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -177,7 +203,18 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   useEffect(() => {
     const onHash = () => {
       const r = parseHash();
-      if (r.kind === 'ws' && r.ws === wsId && r.wf && docRef.current && r.wf !== docRef.current.id) {
+      if (r.kind !== 'ws' || r.ws !== wsId) return;
+      if (r.page === 'settings') {
+        pageRef.current = 'settings';
+        setPage('settings');
+        setSection(r.section || 'claude');
+        return;
+      }
+      if (pageRef.current === 'settings') {
+        pageRef.current = 'editor';
+        setPage('editor');
+      }
+      if (r.wf && docRef.current && r.wf !== docRef.current.id) {
         openRef.current(r.wf).catch((e) => setError(`Could not open that workflow: ${e.message}`));
       }
     };
@@ -505,7 +542,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     disabled: busy || !!thinking,
     onSwitch: async (id) => { await flush(); onSwitchWorkspace(id); },
     onCreate: async (name) => { await flush(); await onCreateWorkspace(name); },
-    onTeam: () => setTab('team'),
+    onTeam: () => openSettings('team'),
+    onSettings: () => openSettings('claude'),
     onSignOut: async () => { await flush().catch(() => {}); await onSignOut(); },
   };
 
@@ -520,7 +558,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
         runLabel={runLabel}
         busy={busy}
         onAdvance={advance}
-        onShare={() => setTab('team')}
+        onShare={() => openSettings('team')}
+        onSettings={() => openSettings(section)}
       />
       {error && (
         <div className="banner" role="alert">
@@ -528,12 +567,40 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           <button type="button" className="link-btn" onClick={() => setError('')}>Dismiss</button>
         </div>
       )}
-      {claude && !claude.connected && (
+      {claude && !claude.connected && page !== 'settings' && (
         <div className="banner info">
           <span>Claude is not connected, so agent steps and replies are simulated.</span>
-          <button type="button" className="link-btn" onClick={() => setTab('integrations')}>{canManage ? 'Connect Claude' : 'Learn more'}</button>
+          <button type="button" className="link-btn" onClick={() => openSettings('claude')}>{canManage ? 'Connect Claude' : 'Learn more'}</button>
         </div>
       )}
+      {page === 'settings' ? (
+        <SettingsPage
+          section={section}
+          onSection={(id) => openSettings(id)}
+          onClose={closeSettings}
+          canManage={canManage}
+          claude={claude}
+          ints={ints}
+          workflows={list}
+          currentWorkflowId={doc.id}
+          wsId={wsId}
+          me={{ id: user.id, name: user.name }}
+          onConnectClaude={connectClaude}
+          onDisconnectClaude={disconnectClaude}
+          onConnect={connectTool}
+          onDisconnect={disconnectTool}
+          team={{
+            wsId,
+            wsName: ws.name,
+            role,
+            members,
+            onMembers: setMembers,
+            onRenamed: () => onRefresh(),
+            onLeft,
+            onDeleted: onLeft,
+          }}
+        />
+      ) : (
       <div className="body">
         <Palette doc={view} onAddAgent={addAgent} onAddPerson={addPerson} onCreateAgent={openBuilder} />
         <Canvas doc={view} selected={node.id} busy={busy} onSelect={select} onCreateAgent={openBuilder} />
@@ -546,7 +613,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           chat={{ draft, thinking, onDraft: setDraft, onSend: sendMessage }}
           settings={{
             ints,
-            onGoIntegrations: () => setTab('integrations'),
+            onGoIntegrations: () => openSettings('integrations'),
             onEdit: (id, patch) => update((d) => patchNode(d, id, patch)),
             onRemove: removeSelected,
             onDiscuss: (n) => {
@@ -554,16 +621,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
               setDraft(`About “${n.title}”: `);
             },
           }}
-          runs={{ wsId, wfId: doc.id, canManage, ints, onGoIntegrations: () => setTab('integrations') }}
-          integrations={{
-            claude,
-            canManage,
-            onConnectClaude: connectClaude,
-            onDisconnectClaude: disconnectClaude,
-            ints,
-            onConnect: connectTool,
-            onDisconnect: disconnectTool,
-          }}
+          runs={{ wsId, wfId: doc.id, ints, onGoIntegrations: () => openSettings('integrations'), onManageTriggers: () => openSettings('triggers') }}
           builder={{
             ints,
             form,
@@ -577,20 +635,11 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
               setTab('chat');
               setFormError('');
             },
-            onGoIntegrations: () => setTab('integrations'),
-          }}
-          team={{
-            wsId,
-            wsName: ws.name,
-            role,
-            members,
-            onMembers: setMembers,
-            onRenamed: () => onRefresh(),
-            onLeft,
-            onDeleted: onLeft,
+            onGoIntegrations: () => openSettings('integrations'),
           }}
         />
       </div>
+      )}
     </div>
   );
 }
