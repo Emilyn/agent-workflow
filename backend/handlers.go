@@ -26,6 +26,7 @@ type Server struct {
 	signups     *limiter
 	claudeCalls *limiter // per workspace, so one teammate can't burn through the shared key
 	dummyHash   string
+	wake        chan struct{} // nudges the run worker when something is queued
 }
 
 func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
@@ -45,6 +46,7 @@ func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
 		signups:     newLimiter(10, time.Hour),
 		claudeCalls: newLimiter(60, time.Minute),
 		dummyHash:   dummy,
+		wake:        make(chan struct{}, 1),
 	}, nil
 }
 
@@ -79,6 +81,17 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/workspaces/{ws}/integrations/{provider}/start", s.inWorkspace("admin", s.integrationStart))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/integrations/{provider}", s.inWorkspace("admin", s.integrationDisconnect))
 	mux.HandleFunc("GET /api/integrations/{provider}/callback", s.integrationCallback)
+
+	mux.HandleFunc("GET /api/workspaces/{ws}/triggers", s.inWorkspace("member", s.listTriggers))
+	mux.HandleFunc("POST /api/workspaces/{ws}/triggers", s.inWorkspace("admin", s.createTrigger))
+	mux.HandleFunc("PATCH /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.patchTrigger))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.deleteTrigger))
+	mux.HandleFunc("POST /api/hooks/{id}", s.webhook)
+	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}/runs", s.inWorkspace("member", s.listRuns))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/runs", s.inWorkspace("member", s.startRun))
+	mux.HandleFunc("POST /api/workspaces/{ws}/runs/{rid}/rerun", s.inWorkspace("member", s.rerun))
+	mux.HandleFunc("POST /api/workspaces/{ws}/review-actions/{aid}/approve", s.inWorkspace("member", s.approveAction))
+	mux.HandleFunc("POST /api/workspaces/{ws}/review-actions/{aid}/discard", s.inWorkspace("member", s.discardAction))
 
 	mux.HandleFunc("GET /api/workspaces/{ws}/settings", s.inWorkspace("member", s.getSettings))
 	mux.HandleFunc("PUT /api/workspaces/{ws}/settings", s.inWorkspace("member", s.putSettings))
@@ -478,7 +491,7 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request, c wsCtx) {
 		writeError(w, http.StatusConflict, "only agent steps run automatically; people finish their own steps")
 		return
 	}
-	tools, run, via, err := s.toolbox(r.Context(), c.WS, n.Tools)
+	tools, run, via, err := s.toolbox(r.Context(), c.WS, n.Tools, nil)
 	if err != nil {
 		s.fail(w, r, err)
 		return

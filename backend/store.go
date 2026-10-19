@@ -211,6 +211,20 @@ func blankWorkflow() Workflow {
 	}
 }
 
+// reviewWorkflow reviews every new pull or merge request that a trigger sends it.
+func reviewWorkflow() Workflow {
+	return Workflow{
+		NextID: 3,
+		Steps: [][]Node{
+			{{ID: "n1", Kind: "trigger", Title: "New pull or merge request", Desc: "Starts when GitHub or GitLab reports a new request in a project you choose (Runs tab).", Who: "GitHub or GitLab", Tools: []string{}}},
+			{{ID: "n2", AgentID: "reviewer", Kind: "agent", Title: "Code reviewer", Desc: "Reads the changes and writes a review.", Who: "Claude Sonnet",
+				Instruction: "Review the code changes in this request. Look for bugs, security problems, missing error handling or tests, and code that is hard to follow. Be specific and brief, point to exact lines, and say so plainly when the change looks good.",
+				Tools:       []string{"GitHub", "GitLab"}}},
+		},
+		Messages: []Message{},
+	}
+}
+
 // exampleWorkflow is the weekly digest a fresh install starts with.
 func exampleWorkflow() Workflow {
 	return Workflow{

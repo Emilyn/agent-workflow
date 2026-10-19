@@ -554,6 +554,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
               setDraft(`About “${n.title}”: `);
             },
           }}
+          runs={{ wsId, wfId: doc.id, canManage, ints, onGoIntegrations: () => setTab('integrations') }}
           integrations={{
             claude,
             canManage,

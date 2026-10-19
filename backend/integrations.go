@@ -43,6 +43,14 @@ type provider struct {
 	revoke    func(app OAuthApp, ts tokenSet) // best effort, may be nil
 	tools     []ToolDef
 	run       func(ctx context.Context, app OAuthApp, ts tokenSet, name string, in json.RawMessage) (string, error)
+
+	// Code review (GitHub and GitLab). All nil for the other providers.
+	validProject func(project string) bool
+	fetchChange  func(ctx context.Context, app OAuthApp, ts tokenSet, project string, number int) (changeEvent, error)
+	postReview   func(ctx context.Context, app OAuthApp, ts tokenSet, ev changeEvent, summary string, comments []reviewComment) (string, error)
+	createHook   func(ctx context.Context, app OAuthApp, ts tokenSet, project, hookURL, secret string) (string, error)
+	deleteHook   func(ctx context.Context, app OAuthApp, ts tokenSet, project, hookID string) error
+	parseHook    func(h http.Header, body []byte, secret string, onPush bool) (ev changeEvent, ignore string, err error)
 }
 
 type tokenResponse struct {
@@ -140,27 +148,44 @@ func postToken(ctx context.Context, endpoint string, form url.Values, asJSON boo
 
 // apiGet calls a provider's REST API. Errors are short and safe to show to the model.
 func apiGet(ctx context.Context, label, base, path string, q url.Values, token string, hdr map[string]string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	return apiDo(ctx, label, http.MethodGet, base, path, q, nil, token, hdr)
+}
+
+// apiPost sends a JSON body.
+func apiPost(ctx context.Context, label, base, path string, body any, token string, hdr map[string]string) ([]byte, error) {
+	return apiDo(ctx, label, http.MethodPost, base, path, nil, body, token, hdr)
+}
+
+func apiDo(ctx context.Context, label, method, base, path string, q url.Values, body any, token string, hdr map[string]string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	u := base + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	var rd io.Reader
+	if body != nil {
+		raw, _ := json.Marshal(body)
+		rd = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("could not reach %s", label)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -473,8 +498,10 @@ func (s *Server) tokensFor(ctx context.Context, wsID string, p *provider) (token
 
 // toolbox collects the tools an agent step may use: only for providers the step lists as a tool
 // and that the workspace has connected. It returns the labels of those providers for the prompt.
-func (s *Server) toolbox(ctx context.Context, wsID string, stepTools []string) (defs []ToolDef, run ToolRunner, labels []string, err error) {
-	byTool := map[string]*provider{}
+// Inside a run started by a pull or merge request (rc != nil) the step also gets post_review,
+// which can only ever write to that one change.
+func (s *Server) toolbox(ctx context.Context, wsID string, stepTools []string, rc *runCtx) (defs []ToolDef, run ToolRunner, labels []string, err error) {
+	handlers := map[string]func(ctx context.Context, in json.RawMessage) (string, error){}
 	for _, id := range providerOrder {
 		p := providers[id]
 		if !hasTool(stepTools, p.Label) {
@@ -490,26 +517,39 @@ func (s *Server) toolbox(ctx context.Context, wsID string, stepTools []string) (
 		labels = append(labels, p.Label)
 		for _, t := range p.tools {
 			defs = append(defs, t)
-			byTool[t.Name] = p
+			name := t.Name
+			handlers[name] = func(ctx context.Context, in json.RawMessage) (string, error) {
+				ts, err := s.tokensFor(ctx, wsID, p)
+				if err != nil {
+					return "", s.tokenError(p, err)
+				}
+				return p.run(ctx, s.cfg.Apps[p.ID], ts, name, in)
+			}
+		}
+		if rc != nil && rc.Ev.Provider == p.ID && p.postReview != nil {
+			defs = append(defs, postReviewTool(p))
+			handlers["post_review"] = func(ctx context.Context, in json.RawMessage) (string, error) {
+				return s.postReviewTool(ctx, rc, p, in)
+			}
 		}
 	}
 	if len(defs) == 0 {
 		return nil, nil, nil, nil
 	}
 	run = func(ctx context.Context, name string, in json.RawMessage) (string, error) {
-		p := byTool[name]
-		if p == nil {
+		h := handlers[name]
+		if h == nil {
 			return "", fmt.Errorf("unknown tool %q", name)
 		}
-		ts, err := s.tokensFor(ctx, wsID, p)
-		if err != nil {
-			if errors.Is(err, errNotConnected) {
-				return "", fmt.Errorf("%s is no longer connected", p.Label)
-			}
-			s.log.Warn("token unavailable", "provider", p.ID, "err", err)
-			return "", errors.New(cut(err.Error(), 200))
-		}
-		return p.run(ctx, s.cfg.Apps[p.ID], ts, name, in)
+		return h(ctx, in)
 	}
 	return defs, run, labels, nil
+}
+
+func (s *Server) tokenError(p *provider, err error) error {
+	if errors.Is(err, errNotConnected) {
+		return fmt.Errorf("%s is no longer connected", p.Label)
+	}
+	s.log.Warn("token unavailable", "provider", p.ID, "err", err)
+	return errors.New(cut(err.Error(), 200))
 }

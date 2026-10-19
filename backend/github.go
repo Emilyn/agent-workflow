@@ -95,6 +95,7 @@ func githubTools() []ToolDef {
 		{Name: "github_get_issue", Description: "Read one issue with its first comments.", InputSchema: schema(map[string]any{"number": numberProp}, "number")},
 		{Name: "github_list_pull_requests", Description: "List pull requests of a repository, newest first.", InputSchema: schema(map[string]any{"state": stateProp, "limit": limitProp})},
 		{Name: "github_get_pull_request", Description: "Read one pull request: description and the list of changed files (no diffs).", InputSchema: schema(map[string]any{"number": numberProp}, "number")},
+		{Name: "github_get_pull_request_diff", Description: "Read the code changes of a pull request: each changed file with its patch. Added and unchanged lines are prefixed with their line number in the new file.", InputSchema: schema(map[string]any{"number": numberProp}, "number")},
 		{Name: "github_list_commits", Description: "List recent commits, optionally on one branch.", InputSchema: schema(map[string]any{"ref": map[string]any{"type": "string", "description": "Branch or tag (default: the default branch)"}, "limit": limitProp})},
 		{Name: "github_read_file", Description: "Read a text file, or list a directory, from a repository.", InputSchema: schema(map[string]any{"path": map[string]any{"type": "string", "description": "Path inside the repository; empty for the top level"}, "ref": map[string]any{"type": "string", "description": "Branch, tag or commit (default: the default branch)"}}, "path")},
 	}
@@ -250,6 +251,12 @@ func (g *gitHub) run(ctx context.Context, name string, raw json.RawMessage) (str
 		}
 		return compact(out), nil
 
+	case "github_get_pull_request_diff":
+		if in.Number < 1 || in.Number > 10_000_000 {
+			return "", errors.New("number must be a positive integer")
+		}
+		return g.diff(ctx, base, in.Number)
+
 	case "github_list_commits":
 		q := url.Values{"per_page": {in.limit(15)}}
 		if in.Ref != "" {
@@ -377,5 +384,12 @@ func githubProvider() *provider {
 		},
 		tools: githubTools(),
 		run:   githubRun,
+
+		validProject: githubValidProject,
+		fetchChange:  githubFetchChange,
+		postReview:   githubPostReview,
+		createHook:   githubCreateHook,
+		deleteHook:   githubDeleteHook,
+		parseHook:    githubParseHook,
 	}
 }

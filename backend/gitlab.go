@@ -73,6 +73,7 @@ func gitlabTools() []ToolDef {
 		{Name: "gitlab_get_issue", Description: "Read one GitLab issue with its first comments.", InputSchema: with(map[string]any{"number": number}, "number")},
 		{Name: "gitlab_list_merge_requests", Description: "List merge requests of a GitLab project, newest first.", InputSchema: with(map[string]any{"state": mrState, "limit": limitProp})},
 		{Name: "gitlab_get_merge_request", Description: "Read one merge request: description and changed file names (no diffs).", InputSchema: with(map[string]any{"number": number}, "number")},
+		{Name: "gitlab_get_merge_request_diff", Description: "Read the code changes of a merge request: each changed file with its patch. Added and unchanged lines are prefixed with their line number in the new file.", InputSchema: with(map[string]any{"number": number}, "number")},
 		{Name: "gitlab_list_commits", Description: "List recent commits, optionally on one branch.", InputSchema: with(map[string]any{"ref": map[string]any{"type": "string", "description": "Branch or tag (default: the default branch)"}, "limit": limitProp})},
 		{Name: "gitlab_read_file", Description: "Read a text file, or list a directory, from a GitLab project.", InputSchema: with(map[string]any{"path": map[string]any{"type": "string", "description": "Path inside the repository; empty for the top level"}, "ref": map[string]any{"type": "string", "description": "Branch, tag or commit (default: the default branch)"}}, "path")},
 	}
@@ -205,6 +206,12 @@ func gitlabRun(ctx context.Context, app OAuthApp, ts tokenSet, name string, raw 
 			out["comments"] = comments
 		}
 		return compact(out), nil
+
+	case "gitlab_get_merge_request_diff":
+		if in.Number < 1 || in.Number > 10_000_000 {
+			return "", errors.New("number must be a positive integer")
+		}
+		return glDiff(ctx, app, ts, base, in.Number)
 
 	case "gitlab_list_commits":
 		q := url.Values{"per_page": {in.per(15)}}
@@ -340,5 +347,12 @@ func gitlabProvider() *provider {
 		},
 		tools: gitlabTools(),
 		run:   gitlabRun,
+
+		validProject: gitlabValidProject,
+		fetchChange:  gitlabFetchChange,
+		postReview:   gitlabPostReview,
+		createHook:   gitlabCreateHook,
+		deleteHook:   gitlabDeleteHook,
+		parseHook:    gitlabParseHook,
 	}
 }

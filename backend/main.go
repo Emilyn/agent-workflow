@@ -77,6 +77,9 @@ func run(log *slog.Logger) error {
 		}
 	}()
 
+	stopWorker := srv.StartWorker(ctx, 2)
+	defer stopWorker()
+
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Routes(),

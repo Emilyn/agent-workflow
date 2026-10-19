@@ -79,8 +79,8 @@ func LoadConfig() (Config, error) {
 		DBMaxConns:   20,
 		PublicURL:    strings.TrimRight(envOr("PUBLIC_URL", "http://localhost:"+envOr("PORT", "8080")), "/"),
 		Apps: map[string]OAuthApp{
-			"github": loadApp("GITHUB", "public_repo read:user", envOr("GITHUB_OAUTH_URL", "https://github.com"), envOr("GITHUB_API_URL", "https://api.github.com")),
-			"gitlab": loadApp("GITLAB", "read_api read_user", envOr("GITLAB_URL", "https://gitlab.com"), strings.TrimRight(envOr("GITLAB_URL", "https://gitlab.com"), "/")+"/api/v4"),
+			"github": loadApp("GITHUB", "public_repo read:user write:repo_hook", envOr("GITHUB_OAUTH_URL", "https://github.com"), envOr("GITHUB_API_URL", "https://api.github.com")),
+			"gitlab": loadApp("GITLAB", "api read_user", envOr("GITLAB_URL", "https://gitlab.com"), strings.TrimRight(envOr("GITLAB_URL", "https://gitlab.com"), "/")+"/api/v4"),
 			"jira":   loadApp("JIRA", "read:jira-work read:jira-user offline_access", envOr("JIRA_AUTH_URL", "https://auth.atlassian.com"), envOr("JIRA_API_URL", "https://api.atlassian.com")),
 			"figma":  loadApp("FIGMA", "current_user:read file_content:read file_comments:read", envOr("FIGMA_AUTH_URL", "https://www.figma.com"), envOr("FIGMA_API_URL", "https://api.figma.com")),
 		},

@@ -82,8 +82,8 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 
 | Service | Default scopes | Where to create the app | Read-only tools |
 | --- | --- | --- | --- |
-| GitHub | `public_repo read:user` (use `repo read:user` for private repositories) | Settings → Developer settings → OAuth Apps | repo info, issues, pull requests (with changed file names), commits, file or directory contents |
-| GitLab | `read_api read_user` | User settings → Applications (or the group or admin area). Tick "Confidential" | project info, issues, merge requests (with changed file names), commits, file or directory contents |
+| GitHub | `public_repo read:user write:repo_hook` (use `repo read:user write:repo_hook` for private repositories) | Settings → Developer settings → OAuth Apps | repo info, issues, pull requests (with changed file names), pull request diff, commits, file or directory contents |
+| GitLab | `api read_user` (GitLab has no narrower scope that can post review comments) | User settings → Applications (or the group or admin area). Tick "Confidential" | project info, issues, merge requests (with changed file names), merge request diff, commits, file or directory contents |
 | Jira | `read:jira-work read:jira-user offline_access` | developer.atlassian.com → OAuth 2.0 (3LO) app. Add the Jira API permissions | list projects, search issues with JQL, read one issue with comments |
 | Figma | `current_user:read file_content:read file_comments:read` | figma.com/developers/apps | file pages and frames, text and layer outline of a frame, comments |
 
@@ -95,6 +95,31 @@ How it is kept safe:
 - Tokens carry only the scopes you configure. Anyone in the workspace who can run an agent can use them through that agent, so connect an account whose access you are happy to share with the team.
 - Disconnecting deletes the token. GitHub and GitLab grants are also revoked at the service (Jira and Figma do not offer a revoke call for this flow, so remove the app's access in their settings if you need to).
 - Jira connects the first site Atlassian lists for the account.
+
+## Code review on pull and merge requests (GitHub and GitLab)
+
+A workflow can start by itself for every new pull request (GitHub) or merge request (GitLab), read the changes, and write a review.
+
+1. Connect the service under **Integrations** (see above) and set `PUBLIC_URL` to an address the service can reach. On a laptop, use a tunnel (for example `cloudflared tunnel` or `ngrok`) and set `PUBLIC_URL` to its address.
+2. Create a workflow from the **Code review** template, or give any agent step the GitHub or GitLab tool.
+3. Open the **Runs** tab, then **Add a trigger**: choose the service, the project (`owner/repo` or `group/project`), and what happens with the review.
+4. The app tries to register the webhook itself. If that is refused (for example, the token lacks rights), the trigger shows the payload URL and secret to add by hand: GitHub → Settings → Webhooks (JSON, "Pull requests" events); GitLab → Settings → Webhooks (secret token, "Merge request events").
+5. **Try it on one request** in the same tab starts a run on any pull or merge request without waiting for a webhook, which is the easiest way to test.
+
+How a run works:
+
+- A background worker picks up queued runs (so a restart or a slow model does not lose them), runs the agent steps in order, and skips steps assigned to a person. Failed runs are retried up to 3 times; a busy Claude is retried after 30 seconds.
+- The agent reads the diff with the diff tool and finishes with the `post_review` tool: a summary plus up to 20 inline comments on changed lines. It cannot choose where to post: the tool is bound to the one pull or merge request that started the run, and works once per run.
+- **Draft mode (default):** the review is saved and a teammate sees it in the Runs tab, then picks **Approve and post** or **Discard**. **Post mode** (admin choice per trigger) posts straight away. Manual runs always make drafts.
+- GitHub gets one review with the inline comments. GitLab gets one discussion per inline comment plus a summary note. Comments that cannot be placed on the diff are folded into the summary instead of being lost.
+- Reviews are posted as the account that connected the service, with a footer saying the review is automatic. Use a dedicated bot account for that.
+
+Safety:
+
+- The webhook address contains an unguessable id and every delivery is verified (GitHub: HMAC-SHA256 signature; GitLab: secret token, compared in constant time). The secret is stored encrypted and shown only to admins.
+- Deliveries are de-duplicated per pull or merge request and commit, so a redelivery does not review twice. Drafts are skipped. At most 50 runs can be active per workspace.
+- The pull request text and code are untrusted: the prompt says so, and the agent's only write is the single bound review.
+- Large diffs are truncated (about 60,000 characters, 6,000 per file), and the agent is told when that happens.
 
 ## Roles
 
@@ -135,6 +160,10 @@ All routes except health, `auth/*` and `invites/preview` need a signed-in sessio
 | `GET …/claude`; `PUT`, `DELETE …/claude/key` | Whether Claude is connected, and the stored key. |
 | `GET …/integrations`; `POST …/integrations/{provider}/start`; `DELETE …/integrations/{provider}` | Connection status of every tool, the sign-in address (admins), and disconnect (admins). `{provider}` is `github`, `gitlab`, `jira` or `figma`. |
 | `GET /api/integrations/{provider}/callback` | Where the service sends the browser back. Redirects to the app with `?integration=…&result=connected` or `result=error&reason=…`. |
+| `GET`, `POST …/triggers`; `PATCH`, `DELETE …/triggers/{id}` | Review triggers (admins create, change, delete; members see them without the secret). |
+| `POST /api/hooks/{id}` | Public webhook receiver for GitHub and GitLab. Verified by signature or token. |
+| `GET`, `POST …/workflows/{id}/runs`; `POST …/runs/{id}/rerun` | Run history, start a run on one pull or merge request, run again. |
+| `POST …/review-actions/{id}/approve`, `…/discard` | Post or throw away a draft review (any member who can run agents). |
 | `GET`, `PUT …/settings` | Custom agents and integration flags. |
 | `GET`, `POST …/workflows`; `GET`, `PUT`, `DELETE …/workflows/{id}` | Workflows. `PUT` needs the `version` you loaded and returns 409 with the current copy if someone saved since. |
 | `GET …/workflows/{id}/sync?after=&version=` | Polled by open screens: new messages, results, and the workflow if it changed. |
@@ -166,8 +195,9 @@ The server keeps no state in memory except rate-limit counters, so you can run s
 
 - **Real:** accounts, teams, roles, invites, Postgres storage, encrypted per-workspace API keys, workflows, running agent steps through Claude, shared chat, conflict detection on saves. Tested against a fake Anthropic server, plus a manual check that Anthropic rejects a bad key.
 - **Real, GitHub, GitLab, Jira, Figma:** OAuth connect per workspace, encrypted tokens with automatic refresh, read-only tools that Claude calls during a step. Tested against fake services and a scripted fake Anthropic (including token expiry, rotation, concurrent refresh and input validation), plus a browser run of connecting all four and running a step. **Not tried against the real services** (no OAuth apps were available), so expect to fix small differences on the first real sign-in, especially Figma's scope names and Jira's search endpoint.
+- **Real, review triggers:** webhooks, durable run queue and worker, diff reading, draft-then-approve reviews, and direct posting, for GitHub and GitLab. Tested against fake services and a scripted Claude, in Go and in the browser. **Not tried against real GitHub or GitLab**, so expect small differences (for example how a position is accepted for an inline comment).
 - **Placeholder, other tools on an agent** (Web search, Docs, Sheets, Slack, Email): recorded but not called.
-- **Not built for the connected tools:** writing (comments, tickets, pull requests), per-repository or per-project limits, choosing among several Jira sites, one connection per user instead of per workspace.
+- **Not built for the connected tools:** writing other than the review (comments elsewhere, tickets, pull requests), triggers for Jira or Figma, per-repository or per-project limits, choosing among several Jira sites, one connection per user instead of per workspace.
 - **Not built:** password reset, email verification and email delivery, sign-in with Google or SSO, two-factor, audit log, billing, Branch/Parallel/Wait steps, scheduled triggers (the example's "Every Monday" is a label).
 
 ## Why API keys and not "sign in with Claude Pro"

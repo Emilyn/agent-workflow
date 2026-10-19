@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 const TEMPLATES = [
   { id: 'blank', label: 'Blank' },
   { id: 'example', label: 'Example' },
+  { id: 'review', label: 'Code review (pull and merge requests)' },
   { id: 'copy', label: 'Copy of this one' },
 ];
 

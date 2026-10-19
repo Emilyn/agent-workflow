@@ -407,14 +407,14 @@ func TestOnlyListedConnectedProvidersGetTools(t *testing.T) {
 	connect(t, p, "figma")
 	runN2(p, workflowWithTools(t, p, []string{"GitHub", "Jira"}))
 	names := an.toolNames2()
-	if len(names) != 7 || !strings.HasPrefix(names[0], "github_") {
+	if len(names) != 8 || !strings.HasPrefix(names[0], "github_") {
 		t.Errorf("tools %v", names)
 	}
 	// Listing several connected providers offers all of them.
 	runN2(p, workflowWithTools(t, p, []string{"GitHub", "Figma", "Docs"}))
 	reqs := an.requests()
 	tools, _ := reqs[len(reqs)-1]["tools"].([]any)
-	if len(tools) != 7+3 {
+	if len(tools) != 8+3 {
 		t.Errorf("%d tools", len(tools))
 	}
 	if sys, _ := reqs[len(reqs)-1]["system"].(string); !strings.Contains(sys, "GitHub, Figma") {

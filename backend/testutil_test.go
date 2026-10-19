@@ -107,10 +107,12 @@ func newEnv(t *testing.T, o ...envOpts) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stopWorker := srv.StartWorker(context.Background(), 2)
 	ts := httptest.NewServer(srv.Routes())
 	e := &env{t: t, db: db, repo: repo, srv: srv, ts: ts, schema: schema}
 	t.Cleanup(func() {
 		ts.Close()
+		stopWorker()
 		db.Close()
 		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
 		admin.Close()

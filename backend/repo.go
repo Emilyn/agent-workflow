@@ -558,6 +558,8 @@ func (r *Repo) CreateWorkflow(ctx context.Context, wsID, userID, name, template,
 			}
 		case template == "example":
 			w = exampleWorkflow()
+		case template == "review":
+			w = reviewWorkflow()
 		case template == "" || template == "blank":
 			w = blankWorkflow()
 		default:
