@@ -10,6 +10,7 @@ Build workflows out of AI agents and people, and talk to the team (and the agent
 - **Team chat:** one thread per workflow, stored on the server. Teammates see new messages within a few seconds. Mentioning an agent adds your message to its instructions.
 - **Claude per workspace:** an admin pastes an Anthropic API key. It is encrypted in the database and never sent back to the browser.
 - **GitHub, GitLab, Jira and Figma per workspace:** an admin signs in once (OAuth). Agents whose tools include one of them can then read from it while they run: repositories, issues, merge requests and files; Jira issues and projects; Figma frames, text and comments. Read only.
+- **Code review on pull and merge requests:** a GitHub or GitLab webhook starts a workflow for every new pull or merge request; the agent reads the diff and writes a review that a teammate approves before it is posted (or posts it directly). See [Code review](#code-review-on-pull-and-merge-requests-github-and-gitlab).
 
 ## Stack
 
@@ -126,9 +127,10 @@ Safety:
 | | Member | Admin | Owner |
 | --- | :-: | :-: | :-: |
 | See and edit workflows, chat, run steps, create agents | yes | yes | yes |
+| See runs, start a review on a pull or merge request, approve or discard a draft review | yes | yes | yes |
 | See member names | yes | yes | yes |
 | See member emails, create and revoke invite links for new members | | yes | yes |
-| Connect or remove the Claude API key and the tool connections, rename the workspace | | yes | yes |
+| Connect or remove the Claude API key and the tool connections, add, change or remove review triggers (and see their webhook secret), rename the workspace | | yes | yes |
 | Invite admins, make or change owners, delete the workspace | | | yes |
 
 Anyone can leave a workspace. A workspace always keeps at least one owner. People who aren't in a workspace get a 404 for everything in it.
@@ -178,7 +180,7 @@ cd backend
 TEST_DATABASE_URL='postgres://postgres@localhost:5432/aw_test?sslmode=disable' go test -race ./...
 ```
 
-The tests use a real Postgres (each test gets its own schema) and a fake Anthropic server. They cover sign-up and sign-in, rate limits, cross-site requests, isolation between workspaces, roles, invites, key encryption, conflicting saves and chat. Without a database the database tests skip; set `REQUIRE_DB=1` to fail instead (CI does).
+The tests use a real Postgres (each test gets its own schema) and a fake Anthropic server. They cover the review triggers (webhook checks, runs, drafts, approval and posting for both services, retries and crash recovery), sign-up and sign-in, rate limits, cross-site requests, isolation between workspaces, roles, invites, key encryption, conflicting saves and chat. Without a database the database tests skip; set `REQUIRE_DB=1` to fail instead (CI does).
 
 ## Scaling notes
 
@@ -186,7 +188,7 @@ The server keeps no state in memory except rate-limit counters, so you can run s
 
 - **Rate limits are per instance.** With N instances the effective limit is N times higher. Move the counters to Postgres or Redis for exact global limits.
 - **Teammates sync by polling** (every 4 seconds per open workflow, plus a membership refresh every 15). That is a few cheap indexed queries each. Replace it with Postgres `LISTEN/NOTIFY` and server-sent events or WebSockets for instant updates and lower load.
-- **Claude calls run inside the request** (up to 85 seconds). For long runs or many at once, move them to a background job queue and stream progress.
+- **Chat and manual step runs call Claude inside the request** (up to 85 seconds). Review runs already use a durable queue: every instance runs 2 workers that claim runs with `FOR UPDATE SKIP LOCKED` and a 10-minute lease, so several instances share the work safely. Move chat runs to the queue too if they get long.
 - **Workspace settings are saved as one document**, so two people creating agents at the same moment can overwrite each other. Give agents their own endpoints and rows when that matters.
 - **Chat grows without bound.** Add retention or archiving.
 - **Database:** back it up (Postgres `pg_dump` or your host's snapshots). Migrations run at startup under an advisory lock, so rolling deploys are safe.
@@ -208,5 +210,5 @@ A Claude Pro or Max plan covers Claude.ai and is billed separately from the API.
 
 1. Write actions with approval (comment on an issue, open a ticket) and more tools such as Slack.
 2. Password reset and email verification (needs an email provider), then SSO.
-3. Real-time updates, background runs, and scheduled triggers.
+3. Real-time updates, scheduled triggers, and webhook triggers for Jira and Figma.
 4. Move the UI onto shadcn/ui. The init (`npx shadcn@latest init --preset b7PaZOyoUt --template vite`) needs `ui.shadcn.com` to be reachable.
