@@ -178,9 +178,9 @@ func (s *Server) executeRun(ctx context.Context, run Run) {
 		fail("the workflow no longer exists")
 		return
 	}
-	key, _, err := s.keyFor(ctx, run.WorkspaceID)
-	if err != nil || key == "" {
-		fail("Claude is not connected: an admin needs to add an Anthropic API key on the Integrations tab")
+	ctx = withLongRun(ctx)
+	if why := s.notReady(ctx, run.WorkspaceID); why != "" {
+		fail(why)
 		return
 	}
 	rc := &runCtx{RunID: run.ID, WS: run.WorkspaceID, Ev: run.Input, Mode: run.ReviewMode}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is read from environment variables once at startup.
@@ -24,6 +25,20 @@ type Config struct {
 	AllowSignup  bool
 	PublicURL    string              // where browsers reach this app; OAuth callbacks are built from it
 	Apps         map[string]OAuthApp // keyed by provider id: github, gitlab, jira, figma
+	ClaudeCode   ClaudeCodeConfig
+}
+
+// ClaudeCodeConfig turns on the "run on this machine's Claude Code" mode. It starts the claude
+// program that is installed on the server, signed in with the login already used there.
+type ClaudeCodeConfig struct {
+	Enabled      bool
+	Path         string        // the claude program; "claude" is looked up on PATH
+	Model        string        // empty: the server's ANTHROPIC_MODEL
+	Effort       string        // low, medium, high, xhigh or max; empty: Claude Code's default
+	MaxTurns     int           // model turns in one run
+	MaxBudgetUSD float64       // spending cap for one run
+	Timeout      time.Duration // longest a background run may take
+	CallbackURL  string        // where claude reaches this server; empty: http://127.0.0.1:PORT
 }
 
 // OAuthApp is the server's OAuth app for one provider. Leave ClientID empty to turn the provider off.
@@ -85,6 +100,11 @@ func LoadConfig() (Config, error) {
 			"figma":  loadApp("FIGMA", "current_user:read file_content:read file_comments:read", envOr("FIGMA_AUTH_URL", "https://www.figma.com"), envOr("FIGMA_API_URL", "https://api.figma.com")),
 		},
 	}
+	cc, err := loadClaudeCode(c.Model)
+	if err != nil {
+		return c, err
+	}
+	c.ClaudeCode = cc
 	if c.DatabaseURL == "" {
 		return c, errors.New("DATABASE_URL is required, e.g. postgres://user:pass@localhost:5432/agentworkflow?sslmode=disable")
 	}
@@ -110,4 +130,44 @@ func LoadConfig() (Config, error) {
 	}
 	c.Secret = key
 	return c, nil
+}
+
+func loadClaudeCode(serverModel string) (ClaudeCodeConfig, error) {
+	cc := ClaudeCodeConfig{
+		Enabled:      envBool("CLAUDE_CODE_ENABLED", false),
+		Path:         envOr("CLAUDE_CODE_PATH", "claude"),
+		Model:        envOr("CLAUDE_CODE_MODEL", serverModel),
+		Effort:       strings.ToLower(os.Getenv("CLAUDE_CODE_EFFORT")),
+		MaxTurns:     15,
+		MaxBudgetUSD: 1,
+		Timeout:      5 * time.Minute,
+		CallbackURL:  strings.TrimRight(os.Getenv("CLAUDE_CODE_CALLBACK_URL"), "/"),
+	}
+	switch cc.Effort {
+	case "", "low", "medium", "high", "xhigh", "max":
+	default:
+		return cc, errors.New("CLAUDE_CODE_EFFORT must be low, medium, high, xhigh or max")
+	}
+	if v := os.Getenv("CLAUDE_CODE_MAX_TURNS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 100 {
+			return cc, errors.New("CLAUDE_CODE_MAX_TURNS must be a number from 1 to 100")
+		}
+		cc.MaxTurns = n
+	}
+	if v := os.Getenv("CLAUDE_CODE_MAX_BUDGET_USD"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f <= 0 || f > 1000 {
+			return cc, errors.New("CLAUDE_CODE_MAX_BUDGET_USD must be a positive number of dollars")
+		}
+		cc.MaxBudgetUSD = f
+	}
+	if v := os.Getenv("CLAUDE_CODE_TIMEOUT_SECONDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 30 || n > 3600 {
+			return cc, errors.New("CLAUDE_CODE_TIMEOUT_SECONDS must be from 30 to 3600")
+		}
+		cc.Timeout = time.Duration(n) * time.Second
+	}
+	return cc, nil
 }

@@ -9,7 +9,7 @@ Build workflows out of AI agents and people, and talk to the team (and the agent
 - **Create agents:** name, role, instructions, tools, model. Add one with a click, or `@mention` it in chat.
 - **Run it:** each agent step is sent to Claude with the output of the step before it. People finish their own steps.
 - **Team chat:** one thread per workflow, stored on the server. Teammates see new messages within a few seconds. Mentioning an agent adds your message to its instructions.
-- **Claude per workspace:** an admin pastes an Anthropic API key. It is encrypted in the database and never sent back to the browser.
+- **Claude per workspace:** an admin pastes an Anthropic API key. It is encrypted in the database and never sent back to the browser. Or, on a server you run, the workspace can use the Claude Code installed there instead.
 - **GitHub, GitLab, Jira and Figma per workspace:** an admin signs in once (OAuth). Agents whose tools include one of them can then read from it while they run: repositories, issues, merge requests and files; Jira issues and projects; Figma frames, text and comments. Read only.
 - **Code review on pull and merge requests:** a GitHub or GitLab webhook starts a workflow for every new pull or merge request; the agent reads the diff and writes a review that a teammate approves before it is posted (or posts it directly). See [Code review](#code-review-on-pull-and-merge-requests-github-and-gitlab).
 
@@ -74,6 +74,34 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 | `STATIC_DIR` | `../frontend/dist` | Built frontend to serve (`/app/public` in the image). |
 
 `GET /api/health` says the process is up; `GET /api/ready` also checks the database. The server logs JSON, handles SIGTERM by finishing in-flight requests, and the image has a `healthcheck` subcommand.
+
+## Run agents on your own Claude Code (optional)
+
+By default agents run on an Anthropic API key that an admin adds under **Settings → Claude**. If you run this server yourself, you can instead let a workspace run its agents on the **Claude Code installed on that server**, with the login you already use there. No API key is needed for those workspaces.
+
+1. Install Claude Code on the machine that runs the backend and sign in once: run `claude`, then `/login`.
+2. Start the backend with `CLAUDE_CODE_ENABLED=true` (see the table below).
+3. An admin opens **Settings → Claude** and picks **Claude Code on this machine**. The card shows which account the agent runs as and the limits. If Claude Code is missing or signed out, it says so and the workspace stays on its API key.
+
+How it works: each run starts `claude -p` in an empty temporary folder. Its own tools (files, shell, web) and your personal Claude Code settings are switched off. It is given only this app's tools (GitHub, GitLab, Jira, Figma and, for reviews, the single bound `post_review`), through a small MCP endpoint on this server at an unguessable, per-run address that stops working when the run ends. They run here with the same checks as before. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the environment Claude Code sees, so it uses the login. Background review runs may take up to `CLAUDE_CODE_TIMEOUT_SECONDS`; steps run from the browser stop after about 100 seconds.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CLAUDE_CODE_ENABLED` | `false` | Offer the mode to workspace admins. |
+| `CLAUDE_CODE_PATH` | `claude` | The Claude Code program (a name on `PATH`, or a full path). |
+| `CLAUDE_CODE_MODEL` | `ANTHROPIC_MODEL` | Model for these runs (an alias or a full name). |
+| `CLAUDE_CODE_EFFORT` | Claude Code's default | `low`, `medium`, `high`, `xhigh` or `max`. |
+| `CLAUDE_CODE_MAX_TURNS` | `15` | Model turns in one run. |
+| `CLAUDE_CODE_MAX_BUDGET_USD` | `1` | Spending cap for one run. |
+| `CLAUDE_CODE_TIMEOUT_SECONDS` | `300` | Longest a background run may take. |
+| `CLAUDE_CODE_CALLBACK_URL` | `http://127.0.0.1:PORT` | Where Claude Code reaches this server's tool endpoint. |
+
+Things to know:
+
+- **Whose login:** every workspace on the server that picks this mode uses the same login, the one on the server. Use it for your own work on a machine you run. Do not use it to hand a personal plan to other people, and check your plan's terms before sharing it with a team. For a shared or hosted app, use API keys.
+- **Docker:** the image does not contain Claude Code. Install it in your own image, or run the backend on the host, so that `claude` exists and is signed in where the server runs. A container needs the login (the `~/.claude` folder) mounted in.
+- Runs are sequential processes (a few seconds of start-up each). Plan for a handful at a time, not hundreds.
+- Cost and rate limits count against the signed-in plan, not against an API key.
 
 ## Connecting tools (GitHub, GitLab, Jira, Figma)
 
@@ -160,7 +188,7 @@ All routes except health, `auth/*` and `invites/preview` need a signed-in sessio
 | `POST /api/workspaces`; `PATCH`, `DELETE /api/workspaces/{ws}` | Create, rename, delete. |
 | `GET /api/workspaces/{ws}/members`; `PATCH`, `DELETE …/members/{userId}` | List, change role, remove or leave. |
 | `GET`, `POST …/invites`; `DELETE …/invites/{id}` | Invite links. The token is returned once, on creation. |
-| `GET …/claude`; `PUT`, `DELETE …/claude/key` | Whether Claude is connected, and the stored key. |
+| `GET …/claude`; `PUT`, `DELETE …/claude/key`; `PUT …/claude/mode` | Whether Claude is connected, the stored key, and whether the workspace runs on its key (`api`) or the server's Claude Code (`claude_code`). |
 | `GET …/integrations`; `POST …/integrations/{provider}/start`; `DELETE …/integrations/{provider}` | Connection status of every tool, the sign-in address (admins), and disconnect (admins). `{provider}` is `github`, `gitlab`, `jira` or `figma`. |
 | `GET /api/integrations/{provider}/callback` | Where the service sends the browser back. Redirects to the app with `?integration=…&result=connected` or `result=error&reason=…`. |
 | `GET`, `POST …/triggers`; `PATCH`, `DELETE …/triggers/{id}` | Review triggers (admins create, change, delete; members see them without the secret). |
@@ -203,9 +231,11 @@ The server keeps no state in memory except rate-limit counters, so you can run s
 - **Not built for the connected tools:** writing other than the review (comments elsewhere, tickets, pull requests), triggers for Jira or Figma, per-repository or per-project limits, choosing among several Jira sites, one connection per user instead of per workspace.
 - **Not built:** password reset, email verification and email delivery, sign-in with Google or SSO, two-factor, audit log, billing, Branch/Parallel/Wait steps, scheduled triggers (the example's "Every Monday" is a label).
 
-## Why API keys and not "sign in with Claude Pro"
+## Why API keys, and what Claude Code mode changes
 
 A Claude Pro or Max plan covers Claude.ai and is billed separately from the API. Anthropic's terms don't allow third-party apps to offer Claude.ai login or to use Free, Pro or Max credentials on behalf of users ([Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [why the API is billed separately](https://support.claude.com/en/articles/9876003-i-have-a-paid-claude-subscription-pro-max-team-or-enterprise-plans-why-do-i-have-to-pay-separately-to-use-the-claude-api-and-console)). So the app only accepts API keys from the [Claude Console](https://platform.claude.com/), and refuses subscription tokens (`sk-ant-oat…`).
+
+The optional Claude Code mode is a different arrangement: this app never touches a Claude login. It starts the Claude Code that the person running the server installed and signed in themselves, and only that person's own use is covered by their plan. If you host this for other people, use API keys.
 
 ## Next steps
 

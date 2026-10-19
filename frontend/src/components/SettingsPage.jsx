@@ -5,14 +5,14 @@ import TeamPanel from './TeamPanel.jsx';
 import TriggersSection from './TriggersSection.jsx';
 
 export const SECTIONS = [
-  { id: 'claude', label: 'Claude', hint: 'The API key agents run on' },
+  { id: 'claude', label: 'Claude', hint: 'API key or Claude Code' },
   { id: 'integrations', label: 'Integrations', hint: 'GitHub, GitLab, Jira, Figma' },
   { id: 'triggers', label: 'Review triggers', hint: 'Start on new pull requests' },
   { id: 'team', label: 'Team', hint: 'Members, invites, workspace' },
 ];
 
 // Workspace settings on a page of their own, so the side panel stays for the workflow.
-export default function SettingsPage({ section, onSection, onClose, canManage, claude, ints, workflows, currentWorkflowId, wsId, me, team, onConnectClaude, onDisconnectClaude, onConnect, onDisconnect }) {
+export default function SettingsPage({ section, onSection, onClose, canManage, claude, ints, workflows, currentWorkflowId, wsId, me, team, onConnectClaude, onDisconnectClaude, onClaudeMode, onRefreshClaude, onConnect, onDisconnect }) {
   const active = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
   return (
     <div className="settings">
@@ -32,8 +32,8 @@ export default function SettingsPage({ section, onSection, onClose, canManage, c
         <h1 id="settings-title" className="serif" style={{ fontSize: 32, margin: 0 }}>{active.label}</h1>
         {active.id === 'claude' && (
           <>
-            <span className="settings-lead">Claude runs the agents. One API key is shared by the whole workspace, and usage is billed to the Anthropic account it belongs to.</span>
-            <ClaudeCard claude={claude} canManage={canManage} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} />
+            <span className="settings-lead">Claude runs the agents. They use one API key shared by the whole workspace (billed to its Anthropic account), or the Claude Code installed on the server if the person running it turned that on.</span>
+            <ClaudeCard claude={claude} canManage={canManage} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} onMode={onClaudeMode} onRefresh={onRefreshClaude} />
           </>
         )}
         {active.id === 'integrations' && (

@@ -9,10 +9,22 @@ import (
 )
 
 type claudeStatus struct {
-	Connected bool   `json:"connected"`
-	Source    string `json:"source"` // "workspace" | "server" | ""
-	KeyHint   string `json:"keyHint,omitempty"`
-	Model     string `json:"model"`
+	Connected bool       `json:"connected"`
+	Source    string     `json:"source"` // "workspace" | "server" | "claude_code" | ""
+	KeyHint   string     `json:"keyHint,omitempty"`
+	Model     string     `json:"model"`
+	Mode      string     `json:"mode"` // "api" or "claude_code"
+	Code      codeStatus `json:"claudeCode"`
+}
+
+// codeStatus describes the "use the Claude Code on this machine" option.
+type codeStatus struct {
+	Enabled      bool         `json:"enabled"` // the operator turned it on (CLAUDE_CODE_ENABLED)
+	Account      *codeAccount `json:"account,omitempty"`
+	Model        string       `json:"model,omitempty"`
+	Effort       string       `json:"effort,omitempty"`
+	MaxTurns     int          `json:"maxTurns,omitempty"`
+	MaxBudgetUSD float64      `json:"maxBudgetUsd,omitempty"`
 }
 
 // keyFor returns the API key a workspace's runs should use: its own encrypted
@@ -35,8 +47,43 @@ func (s *Server) keyFor(ctx context.Context, wsID string) (key, source string, e
 	return "", "", nil
 }
 
+// notReady says why a workspace cannot run agents yet, or "" when it can.
+func (s *Server) notReady(ctx context.Context, wsID string) string {
+	mode, err := s.repo.AgentMode(ctx, wsID)
+	if err != nil {
+		return "could not read the workspace settings"
+	}
+	if mode == modeClaudeCode {
+		if acct := s.codeAccount(ctx, false); !acct.OK {
+			return "Claude Code is not ready: " + acct.Error
+		}
+		return ""
+	}
+	if key, _, err := s.keyFor(ctx, wsID); err != nil || key == "" {
+		return "Claude is not connected: an admin needs to add an Anthropic API key in Settings"
+	}
+	return ""
+}
+
 func (s *Server) statusFor(ctx context.Context, wsID string) (claudeStatus, error) {
-	st := claudeStatus{Model: s.claude.Model}
+	cc := s.cfg.ClaudeCode
+	st := claudeStatus{Model: s.claude.Model, Mode: modeAPI, Code: codeStatus{Enabled: cc.Enabled}}
+	mode, err := s.repo.AgentMode(ctx, wsID)
+	if err != nil {
+		return st, err
+	}
+	if cc.Enabled {
+		acct := s.codeAccount(ctx, false)
+		st.Code.Account = &acct
+		st.Code.Model, st.Code.Effort, st.Code.MaxTurns, st.Code.MaxBudgetUSD = cc.Model, cc.Effort, cc.MaxTurns, cc.MaxBudgetUSD
+	}
+	if mode == modeClaudeCode {
+		st.Mode, st.Model = modeClaudeCode, cc.Model
+		if st.Code.Account != nil && st.Code.Account.OK {
+			st.Connected, st.Source = true, "claude_code"
+		}
+		return st, nil
+	}
 	enc, hint, err := s.repo.Key(ctx, wsID)
 	if err != nil {
 		return st, err
@@ -98,6 +145,36 @@ func (s *Server) putClaudeKey(w http.ResponseWriter, r *http.Request, c wsCtx) {
 
 func (s *Server) deleteClaudeKey(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	if err := s.repo.DeleteKey(r.Context(), c.WS); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.getClaude(w, r, c)
+}
+
+// putClaudeMode switches a workspace between its API key and the Claude Code on the server.
+func (s *Server) putClaudeMode(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	switch req.Mode {
+	case modeAPI:
+	case modeClaudeCode:
+		if !s.cfg.ClaudeCode.Enabled {
+			writeError(w, http.StatusBadRequest, "Claude Code is not turned on for this server. The person running it sets CLAUDE_CODE_ENABLED=true.")
+			return
+		}
+		if acct := s.codeAccount(r.Context(), true); !acct.OK {
+			writeError(w, http.StatusBadRequest, acct.Error)
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "mode must be api or claude_code")
+		return
+	}
+	if err := s.repo.SetAgentMode(r.Context(), c.WS, c.User.ID, req.Mode); err != nil {
 		s.fail(w, r, err)
 		return
 	}

@@ -27,6 +27,8 @@ type Server struct {
 	claudeCalls *limiter // per workspace, so one teammate can't burn through the shared key
 	dummyHash   string
 	wake        chan struct{} // nudges the run worker when something is queued
+	probe       codeProbe     // who the server's Claude Code is signed in as
+	bridge      *codeBridge   // tools offered to Claude Code while a run is going
 }
 
 func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
@@ -47,6 +49,7 @@ func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
 		claudeCalls: newLimiter(60, time.Minute),
 		dummyHash:   dummy,
 		wake:        make(chan struct{}, 1),
+		bridge:      newCodeBridge(),
 	}, nil
 }
 
@@ -76,6 +79,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/workspaces/{ws}/claude", s.inWorkspace("member", s.getClaude))
 	mux.HandleFunc("PUT /api/workspaces/{ws}/claude/key", s.inWorkspace("admin", s.putClaudeKey))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/claude/key", s.inWorkspace("admin", s.deleteClaudeKey))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/claude/mode", s.inWorkspace("admin", s.putClaudeMode))
+	mux.HandleFunc("/internal/mcp/{token}", s.mcp)
 
 	mux.HandleFunc("GET /api/workspaces/{ws}/integrations", s.inWorkspace("member", s.integrations))
 	mux.HandleFunc("POST /api/workspaces/{ws}/integrations/{provider}/start", s.inWorkspace("admin", s.integrationStart))
@@ -497,7 +502,7 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request, c wsCtx) {
 		return
 	}
 	system, user := stepPrompts(wf, n, previousInput(wf, row), via)
-	fallback := fmt.Sprintf("Simulated output. Connect an Anthropic API key (Integrations tab) to run %s with Claude.\n\nIt would follow: %s", n.Title, n.Instruction)
+	fallback := fmt.Sprintf("Simulated output. Connect Claude in Settings to run %s.\n\nIt would follow: %s", n.Title, n.Instruction)
 	var used []string
 	if run != nil {
 		inner := run
@@ -541,6 +546,20 @@ func (s *Server) generate(ctx context.Context, wsID, system, user, fallback stri
 }
 
 func (s *Server) generateWith(ctx context.Context, wsID, system, user, fallback string, maxTokens int, tools []ToolDef, run ToolRunner) (string, bool, error) {
+	mode, err := s.repo.AgentMode(ctx, wsID)
+	if err != nil {
+		return "", false, err
+	}
+	if mode == modeClaudeCode {
+		if !s.cfg.ClaudeCode.Enabled {
+			return fallback, true, nil
+		}
+		text, err := s.generateCode(ctx, wsID, system, user, tools, run)
+		if err != nil {
+			return "", false, err
+		}
+		return text, false, nil
+	}
 	key, _, err := s.keyFor(ctx, wsID)
 	if err != nil {
 		return "", false, err
@@ -628,7 +647,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, c wsCtx) {
 			"You are Claude, helping a team build a workflow called %q that mixes agents and people. The steps are:\n%s\n\n"+
 				"Answer the teammate in at most three plain sentences. Suggest a concrete change to the workflow when it helps. Do not use lists.",
 			wf.Name, strings.Join(outline, "\n"))
-		fallback = "Noted. Connect an Anthropic API key in the Integrations tab and I will be able to answer properly."
+		fallback = "Noted. Connect Claude in Settings and I will be able to answer properly."
 	}
 	reply, simulated, gerr := s.generate(r.Context(), c.WS, system, req.Message, fallback, 400)
 	if gerr != nil {

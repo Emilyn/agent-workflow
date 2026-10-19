@@ -16,9 +16,14 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv(fakeClaudeEnv) != "" { // this test program is also the stand-in for the claude program
+		fakeClaudeMain()
+		return
+	}
 	passwordIterations = 1000 // fast hashing in tests; production uses pbkdf2Iterations
 	os.Exit(m.Run())
 }
@@ -47,6 +52,7 @@ type envOpts struct {
 	serverKey    string
 	allowSignup  *bool
 	providersURL string // fake GitHub/GitLab/Jira/Figma (see fakeProviders)
+	claudeCode   bool   // turn on Claude Code mode, using this test program as the claude program
 }
 
 func newEnv(t *testing.T, o ...envOpts) *env {
@@ -99,6 +105,9 @@ func newEnv(t *testing.T, o ...envOpts) *env {
 			"figma":  app("figma", "file_content:read", "", "/api"),
 		}
 	}
+	if opt.claudeCode {
+		cfg.ClaudeCode = ClaudeCodeConfig{Enabled: true, Path: os.Args[0], Model: "test-model", MaxTurns: 7, MaxBudgetUSD: 0.5, Timeout: 20 * time.Second}
+	}
 	if opt.allowSignup != nil {
 		cfg.AllowSignup = *opt.allowSignup
 	}
@@ -109,6 +118,9 @@ func newEnv(t *testing.T, o ...envOpts) *env {
 	}
 	stopWorker := srv.StartWorker(context.Background(), 2)
 	ts := httptest.NewServer(srv.Routes())
+	if opt.claudeCode {
+		srv.cfg.ClaudeCode.CallbackURL = ts.URL // where the fake claude reaches the tools
+	}
 	e := &env{t: t, db: db, repo: repo, srv: srv, ts: ts, schema: schema}
 	t.Cleanup(func() {
 		ts.Close()

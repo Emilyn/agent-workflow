@@ -410,6 +410,12 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     setInts(await api.integrationDisconnect(wsId, id));
   };
 
+  const changeClaudeMode = async (mode) => {
+    setClaude(await api.setClaudeMode(wsId, mode)); // throws with a readable message when it cannot be used
+  };
+  const refreshClaude = async () => {
+    setClaude(await api.claudeStatus(wsId));
+  };
   const disconnectClaude = async () => {
     setClaude(await api.disconnectClaude(wsId));
   };
@@ -587,6 +593,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           me={{ id: user.id, name: user.name }}
           onConnectClaude={connectClaude}
           onDisconnectClaude={disconnectClaude}
+          onClaudeMode={changeClaudeMode}
+          onRefreshClaude={refreshClaude}
           onConnect={connectTool}
           onDisconnect={disconnectTool}
           team={{

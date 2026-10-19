@@ -444,6 +444,22 @@ func (r *Repo) DeleteKey(ctx context.Context, wsID string) error {
 	return err
 }
 
+// AgentMode is how a workspace runs its agents: "api" (default) or "claude_code".
+func (r *Repo) AgentMode(ctx context.Context, wsID string) (string, error) {
+	var mode string
+	err := r.db.QueryRowContext(ctx, `SELECT mode FROM workspace_agent WHERE workspace_id = $1`, wsID).Scan(&mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "api", nil
+	}
+	return mode, err
+}
+
+func (r *Repo) SetAgentMode(ctx context.Context, wsID, userID, mode string) error {
+	_, err := r.db.ExecContext(ctx, `INSERT INTO workspace_agent (workspace_id, mode, updated_by) VALUES ($1,$2,$3)
+		ON CONFLICT (workspace_id) DO UPDATE SET mode = EXCLUDED.mode, updated_by = EXCLUDED.updated_by, updated_at = now()`, wsID, mode, userID)
+	return err
+}
+
 // ---------- workflows ----------
 
 func summarize(w Workflow) Summary {
