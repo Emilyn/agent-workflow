@@ -101,6 +101,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/hooks/{id}", s.webhook)
 	mux.HandleFunc("GET /api/workspaces/{ws}/connectors", s.inWorkspace("member", s.listConnectors))
 	mux.HandleFunc("POST /api/workspaces/{ws}/connectors/mcp", s.inWorkspace("admin", s.createConnector))
+	mux.HandleFunc("GET /api/connectors/oauth/callback", s.mcpOAuthCallback)
+	mux.HandleFunc("POST /api/workspaces/{ws}/connectors/mcp/{id}/signin", s.inWorkspace("admin", s.signInConnector))
 	mux.HandleFunc("POST /api/workspaces/{ws}/connectors/mcp/{id}/refresh", s.inWorkspace("admin", s.refreshConnector))
 	mux.HandleFunc("PUT /api/workspaces/{ws}/connectors/mcp/{id}/tools", s.inWorkspace("admin", s.setConnectorTools))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/connectors/mcp/{id}", s.inWorkspace("admin", s.deleteConnector))

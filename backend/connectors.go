@@ -34,6 +34,9 @@ type Connector struct {
 	Enabled    map[string]string // tool name -> hash it had when switched on
 	Error      string
 	Refreshed  time.Time
+	Auth       string     // none | token | oauth
+	OAuth      *oauthMeta // what discovery found, for oauth
+	OAuthEnc   []byte     // client secret, tokens and a sign-in in progress, encrypted
 }
 
 func (c Connector) enabledTools() []mcpTool {
@@ -46,14 +49,20 @@ func (c Connector) enabledTools() []mcpTool {
 	return out
 }
 
-const connectorCols = `id, name, url, header_name, secret_enc, server_name, tools, enabled, error, refreshed_at`
+const connectorCols = `id, name, url, header_name, secret_enc, server_name, tools, enabled, error, refreshed_at, auth, oauth, oauth_enc`
 
 func scanConnector(sc interface{ Scan(...any) error }) (Connector, error) {
 	var c Connector
-	var tools, enabled []byte
+	var tools, enabled, oauth []byte
 	var refreshed sql.NullTime
-	if err := sc.Scan(&c.ID, &c.Name, &c.URL, &c.HeaderName, &c.SecretEnc, &c.ServerName, &tools, &enabled, &c.Error, &refreshed); err != nil {
+	if err := sc.Scan(&c.ID, &c.Name, &c.URL, &c.HeaderName, &c.SecretEnc, &c.ServerName, &tools, &enabled, &c.Error, &refreshed, &c.Auth, &oauth, &c.OAuthEnc); err != nil {
 		return c, err
+	}
+	if len(oauth) > 0 {
+		c.OAuth = &oauthMeta{}
+		if json.Unmarshal(oauth, c.OAuth) != nil {
+			c.OAuth = nil
+		}
 	}
 	_ = json.Unmarshal(tools, &c.Tools)
 	_ = json.Unmarshal(enabled, &c.Enabled)
@@ -102,8 +111,13 @@ func (r *Repo) CreateConnector(ctx context.Context, wsID, userID string, c Conne
 		}
 		tools, _ := json.Marshal(c.Tools)
 		enabled, _ := json.Marshal(c.Enabled)
-		_, err := tx.ExecContext(ctx, `INSERT INTO mcp_connectors (id, workspace_id, name, url, header_name, secret_enc, server_name, tools, enabled, error, refreshed_at, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11)`, c.ID, wsID, c.Name, c.URL, c.HeaderName, c.SecretEnc, c.ServerName, tools, enabled, c.Error, userID)
+		var oauth any
+		if c.OAuth != nil {
+			oauth, _ = json.Marshal(c.OAuth)
+			oauth = string(oauth.([]byte))
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO mcp_connectors (id, workspace_id, name, url, header_name, secret_enc, server_name, tools, enabled, error, refreshed_at, created_by, auth, oauth, oauth_enc)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11, $12, $13, $14)`, c.ID, wsID, c.Name, c.URL, c.HeaderName, c.SecretEnc, c.ServerName, tools, enabled, c.Error, userID, c.Auth, oauth, c.OAuthEnc)
 		if isUniqueViolation(err) {
 			return errNameTaken
 		}
@@ -174,7 +188,23 @@ func authHeaders(headerName, token string) map[string]string {
 	return map[string]string{headerName: token}
 }
 
-func (s *Server) connectorClient(c Connector, wsID string) (*mcpClient, error) {
+func (s *Server) connectorClient(ctx context.Context, c Connector, wsID string) (*mcpClient, error) {
+	if c.Auth == "oauth" {
+		token, err := s.mcpAccessToken(ctx, wsID, c, false)
+		if err != nil {
+			return nil, err
+		}
+		cl := newMCPClient(s.mcpGuard, c.URL, map[string]string{"Authorization": "Bearer " + token})
+		// A token the server refuses (revoked, or expired early) is refreshed once and the request retried.
+		cl.refresh = func(ctx context.Context) (map[string]string, error) {
+			t, err := s.mcpAccessToken(ctx, wsID, c, true)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]string{"Authorization": "Bearer " + t}, nil
+		}
+		return cl, nil
+	}
 	token := ""
 	if len(c.SecretEnc) > 0 {
 		t, err := s.sealer.Open(c.SecretEnc, "mcp|"+wsID+"|"+c.ID)
@@ -208,6 +238,8 @@ type connectorView struct {
 	Tools      []connectorToolView `json:"tools"`
 	Enabled    int                 `json:"enabledCount"`
 	Refreshed  string              `json:"refreshedAt,omitempty"`
+	Auth       string              `json:"auth"`     // none | token | oauth
+	SignedIn   bool                `json:"signedIn"` // oauth: there is a sign-in to use
 }
 
 type connectorsView struct {
@@ -215,16 +247,22 @@ type connectorsView struct {
 		Fetch  bool `json:"fetch"`
 		Search bool `json:"search"`
 	} `json:"web"`
-	MCP []connectorView `json:"mcp"`
+	MCP          []connectorView `json:"mcp"`
+	AuthorizeURL string          `json:"authorizeUrl,omitempty"` // set when the browser should go and sign in
 }
 
-func (s *Server) viewOf(c Connector, admin bool) connectorView {
-	v := connectorView{ID: c.ID, Name: c.Name, HasToken: len(c.SecretEnc) > 0, HeaderName: c.HeaderName, ServerName: c.ServerName, Error: c.Error, Tools: []connectorToolView{}}
+func (s *Server) viewOf(c Connector, wsID string, admin bool) connectorView {
+	v := connectorView{ID: c.ID, Name: c.Name, Auth: c.Auth, HasToken: len(c.SecretEnc) > 0, HeaderName: c.HeaderName, ServerName: c.ServerName, Error: c.Error, Tools: []connectorToolView{}}
 	if u, err := url.Parse(c.URL); err == nil {
 		v.Host = u.Host
 	}
 	if admin {
 		v.URL = c.URL
+	}
+	if c.Auth == "oauth" {
+		if sec, err := s.openOAuth(c, wsID); err == nil && sec.Access != "" {
+			v.SignedIn = true
+		}
 	}
 	if !c.Refreshed.IsZero() {
 		v.Refreshed = c.Refreshed.UTC().Format(rfc)
@@ -251,7 +289,7 @@ func (s *Server) listConnectors(w http.ResponseWriter, r *http.Request, c wsCtx)
 	out.MCP = []connectorView{}
 	admin := roleRank[c.Role] >= roleRank["admin"]
 	for _, x := range list {
-		out.MCP = append(out.MCP, s.viewOf(x, admin))
+		out.MCP = append(out.MCP, s.viewOf(x, c.WS, admin))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -265,10 +303,14 @@ func (s *Server) probeConnector(ctx context.Context, cl *mcpClient) (string, []m
 
 func (s *Server) createConnector(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	var req struct {
-		Name       string `json:"name"`
-		URL        string `json:"url"`
-		Token      string `json:"token"`
-		HeaderName string `json:"headerName"`
+		Name         string `json:"name"`
+		URL          string `json:"url"`
+		Token        string `json:"token"`
+		HeaderName   string `json:"headerName"`
+		OAuth        bool   `json:"oauth"`
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+		Scopes       string `json:"scopes"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -299,11 +341,16 @@ func (s *Server) createConnector(w http.ResponseWriter, r *http.Request, c wsCtx
 		writeError(w, http.StatusBadRequest, "That header name cannot be used.")
 		return
 	}
-	conn := Connector{ID: newID("mc"), Name: req.Name, URL: u.String(), HeaderName: req.HeaderName, Enabled: map[string]string{}}
+	conn := Connector{ID: newID("mc"), Name: req.Name, URL: u.String(), HeaderName: req.HeaderName, Enabled: map[string]string{}, Auth: "none"}
+	if req.OAuth {
+		s.createOAuthConnector(w, r, c, conn, req.ClientID, req.ClientSecret, req.Scopes)
+		return
+	}
 	if req.Token != "" {
+		conn.Auth = "token"
 		conn.SecretEnc = s.sealer.Seal(req.Token, "mcp|"+c.WS+"|"+conn.ID)
 	}
-	cl, err := s.connectorClient(conn, c.WS)
+	cl, err := s.connectorClient(r.Context(), conn, c.WS)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -329,29 +376,8 @@ func (s *Server) refreshConnector(w http.ResponseWriter, r *http.Request, c wsCt
 		s.fail(w, r, err)
 		return
 	}
-	cl, err := s.connectorClient(conn, c.WS)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	server, tools, err := s.probeConnector(r.Context(), cl)
-	if err != nil {
-		_ = s.repo.SaveConnectorTools(r.Context(), c.WS, conn.ID, conn.ServerName, conn.Tools, conn.Enabled, cut(err.Error(), 300))
+	if err := s.refreshTools(r.Context(), c.WS, conn); err != nil {
 		writeError(w, http.StatusBadGateway, "Could not connect: "+err.Error())
-		return
-	}
-	enabled := map[string]string{}
-	for i := range tools {
-		if h, was := conn.Enabled[tools[i].Name]; was {
-			if h == tools[i].Hash && tools[i].ReadOnly {
-				enabled[tools[i].Name] = h
-			} else {
-				tools[i].Changed = true
-			}
-		}
-	}
-	if err := s.repo.SaveConnectorTools(r.Context(), c.WS, conn.ID, server, tools, enabled, ""); err != nil {
-		s.fail(w, r, err)
 		return
 	}
 	s.listConnectors(w, r, c)
@@ -443,7 +469,7 @@ func (s *Server) mcpTools(ctx context.Context, wsID string, stepTools []string, 
 		if len(tools) == 0 {
 			continue
 		}
-		cl, err := s.connectorClient(conn, wsID)
+		cl, err := s.connectorClient(ctx, conn, wsID)
 		if err != nil {
 			s.log.Warn("connector unusable", "connector", conn.Name, "err", err)
 			continue
@@ -465,4 +491,100 @@ func (s *Server) mcpTools(ctx context.Context, wsID string, stepTools []string, 
 		}
 	}
 	return nil
+}
+
+// createOAuthConnector adds a connector that signs in with OAuth: it finds how to sign in, registers this app
+// (or uses the client an admin typed in), saves the connector without tools, and sends the browser off to sign in.
+func (s *Server) createOAuthConnector(w http.ResponseWriter, r *http.Request, c wsCtx, conn Connector, clientID, clientSecret, scopes string) {
+	clientID, clientSecret, scopes = strings.TrimSpace(clientID), strings.TrimSpace(clientSecret), strings.Join(strings.Fields(scopes), " ")
+	if !scopePattern.MatchString(scopes) {
+		writeError(w, http.StatusBadRequest, "Scopes can only contain letters, numbers and . _ : / -")
+		return
+	}
+	if len(clientID) > 300 || len(clientSecret) > 500 || strings.ContainsAny(clientID+clientSecret, "\r\n ") {
+		writeError(w, http.StatusBadRequest, "That client ID or secret does not look right.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+	d, err := s.discoverOAuth(ctx, conn.URL)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Could not set up sign-in: "+err.Error())
+		return
+	}
+	meta, secret := d.Meta, oauthSecret{}
+	meta.Scopes = scopes
+	if clientID != "" {
+		meta.ClientID, meta.AuthMethod = clientID, "none"
+		if clientSecret != "" {
+			meta.AuthMethod, secret.ClientSecret = "client_secret_post", clientSecret
+			for _, m := range d.Methods {
+				if m == "client_secret_basic" && !containsStr(d.Methods, "client_secret_post") {
+					meta.AuthMethod = "client_secret_basic"
+				}
+			}
+		}
+	} else {
+		id, sec, method, err := s.registerClient(ctx, d)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "Could not set up sign-in: "+err.Error())
+			return
+		}
+		meta.ClientID, meta.AuthMethod, secret.ClientSecret = id, method, sec
+	}
+	conn.Auth, conn.OAuth, conn.OAuthEnc = "oauth", &meta, s.sealOAuth(secret, c.WS, conn.ID)
+	if err := s.repo.CreateConnector(r.Context(), c.WS, c.User.ID, conn); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.respondSignIn(w, r, c, conn)
+}
+
+func containsStr(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// respondSignIn answers with the connector list and the address to sign in at.
+func (s *Server) respondSignIn(w http.ResponseWriter, r *http.Request, c wsCtx, conn Connector) {
+	fresh, err := s.repo.GetConnector(r.Context(), c.WS, conn.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	authURL, nonce, err := s.beginSignIn(r.Context(), c.WS, c.User.ID, fresh)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	http.SetCookie(w, s.mcpCookie(nonce, int(stateLifetime.Seconds())))
+	list, err := s.repo.ListConnectors(r.Context(), c.WS)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := connectorsView{MCP: []connectorView{}, AuthorizeURL: authURL}
+	out.Web.Fetch, out.Web.Search = true, s.cfg.WebSearch.Enabled()
+	for _, x := range list {
+		out.MCP = append(out.MCP, s.viewOf(x, c.WS, true))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// signInConnector starts signing in again (first sign-in after adding, or after it expired).
+func (s *Server) signInConnector(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	conn, err := s.repo.GetConnector(r.Context(), c.WS, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if conn.Auth != "oauth" {
+		writeError(w, http.StatusBadRequest, "This connector does not sign in with OAuth.")
+		return
+	}
+	s.respondSignIn(w, r, c, conn)
 }

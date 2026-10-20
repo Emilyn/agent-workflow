@@ -56,6 +56,8 @@ type mcpClient struct {
 	ready   bool
 	nextID  int
 	server  string
+	// refresh gets new credentials after the server refuses the current ones (OAuth). It runs at most once per request.
+	refresh func(ctx context.Context) (map[string]string, error)
 }
 
 func newMCPClient(g guard, url string, headers map[string]string) *mcpClient {
@@ -72,6 +74,27 @@ type rpcMessage struct {
 }
 
 func (c *mcpClient) post(ctx context.Context, body []byte) (*http.Response, error) {
+	resp, err := c.send(ctx, body)
+	if err != nil && errors.Is(err, errUnauthorized) && c.refresh != nil {
+		hdrs, rerr := c.refresh(ctx)
+		if rerr != nil {
+			return nil, rerr
+		}
+		c.headers = hdrs
+		resp, err = c.send(ctx, body)
+	}
+	if errors.Is(err, errUnauthorized) {
+		if c.refresh != nil {
+			return nil, errNeedsSignIn
+		}
+		return nil, errors.New("the server refused the sign-in. Check the token")
+	}
+	return resp, err
+}
+
+var errUnauthorized = errors.New("unauthorized")
+
+func (c *mcpClient) send(ctx context.Context, body []byte) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
 		return nil, errors.New("that is not a valid address")
@@ -98,7 +121,7 @@ func (c *mcpClient) post(ctx context.Context, body []byte) (*http.Response, erro
 	}
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		resp.Body.Close()
-		return nil, fmt.Errorf("the server refused the sign-in (status %d). Check the token", resp.StatusCode)
+		return nil, errUnauthorized
 	}
 	return resp, nil
 }
