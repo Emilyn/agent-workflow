@@ -24,6 +24,7 @@ type Server struct {
 	logins      *limiter // per IP and email
 	loginsIP    *limiter // per IP
 	signups     *limiter
+	hookCalls   *limiter // per workflow, for the incoming webhook address
 	claudeCalls *limiter // per workspace, so one teammate can't burn through the shared key
 	dummyHash   string
 	wake        chan struct{} // nudges the run worker when something is queued
@@ -47,6 +48,7 @@ func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
 		loginsIP:    newLimiter(60, 15*time.Minute),
 		signups:     newLimiter(10, time.Hour),
 		claudeCalls: newLimiter(60, time.Minute),
+		hookCalls:   newLimiter(30, time.Minute),
 		dummyHash:   dummy,
 		wake:        make(chan struct{}, 1),
 		bridge:      newCodeBridge(),
@@ -93,6 +95,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.patchTrigger))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.deleteTrigger))
 	mux.HandleFunc("POST /api/hooks/{id}", s.webhook)
+	mux.HandleFunc("POST /api/workflow-hooks/{token}", s.incomingHook)
+	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}/automation", s.inWorkspace("member", s.automation))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/starts", s.inWorkspace("member", s.startNow))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/schedules", s.inWorkspace("admin", s.createSchedule))
+	mux.HandleFunc("PATCH /api/workspaces/{ws}/workflows/{id}/schedules/{sid}", s.inWorkspace("admin", s.patchSchedule))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/workflows/{id}/schedules/{sid}", s.inWorkspace("admin", s.deleteSchedule))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/workflows/{id}/hook", s.inWorkspace("admin", s.putHook))
+	mux.HandleFunc("PATCH /api/workspaces/{ws}/workflows/{id}/hook", s.inWorkspace("admin", s.patchHook))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/workflows/{id}/hook", s.inWorkspace("admin", s.deleteHook))
 	mux.HandleFunc("GET /api/workspaces/{ws}/runs", s.inWorkspace("member", s.listWorkspaceRuns))
 	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}/runs", s.inWorkspace("member", s.listRuns))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/runs", s.inWorkspace("member", s.startRun))
@@ -336,6 +347,7 @@ func (s *Server) putWorkflow(w http.ResponseWriter, r *http.Request, c wsCtx) {
 		s.fail(w, r, wrapInput(err))
 		return
 	}
+	s.wakeWorker() // a person finishing a step lets a paused automatic run go on
 	writeJSON(w, http.StatusOK, wf)
 }
 
@@ -348,6 +360,7 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request, c wsCtx)
 }
 
 func (s *Server) runReset(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	_ = s.repo.StopStarts(r.Context(), r.PathValue("id"), "The run was reset by hand.")
 	wf, err := s.repo.ResetRun(r.Context(), c.WS, r.PathValue("id"))
 	if err != nil {
 		s.fail(w, r, err)
@@ -363,6 +376,7 @@ type syncResponse struct {
 	Outputs  map[string]Output `json:"outputs"`
 	Messages []Message         `json:"messages"`
 	Workflow *Workflow         `json:"workflow,omitempty"` // present when the client's version is stale
+	Auto     *AutoInfo         `json:"auto,omitempty"`
 }
 
 // sync is polled by open workflows: new chat messages, run results, and the
@@ -381,7 +395,7 @@ func (s *Server) sync(w http.ResponseWriter, r *http.Request, c wsCtx) {
 		s.fail(w, r, err)
 		return
 	}
-	out := syncResponse{Version: wf.Version, Outputs: wf.Outputs, Messages: msgs}
+	out := syncResponse{Version: wf.Version, Outputs: wf.Outputs, Messages: msgs, Auto: wf.Auto}
 	if wf.Version != have {
 		out.Workflow = &wf
 	}
@@ -500,13 +514,34 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request, c wsCtx) {
 		writeError(w, http.StatusConflict, "only agent steps run automatically; people finish their own steps")
 		return
 	}
-	tools, run, via, err := s.toolbox(r.Context(), c.WS, n.Tools, nil)
+	if st, err := s.repo.ActiveStart(r.Context(), id); err == nil && st != nil && st.Status == "running" {
+		writeError(w, http.StatusConflict, "This workflow is running on its own right now. Wait for it to pause or finish.")
+		return
+	}
+	out, err := s.runAgentNode(r.Context(), c.WS, wf, row, n, 1500, true)
 	if err != nil {
+		s.upstreamError(w, r, err)
+		return
+	}
+	if err := s.repo.SetOutput(r.Context(), c.WS, id, n.ID, out); err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, runResponse{StepID: n.ID, Text: out.Text, Simulated: out.Simulated, Used: out.Used})
+}
+
+// runAgentNode runs one agent step with the tools it lists. Without a connected Claude it returns a
+// simulated answer when simulate is set, and Claude's absence as an error otherwise.
+func (s *Server) runAgentNode(ctx context.Context, wsID string, wf Workflow, row int, n *Node, maxTokens int, simulate bool) (Output, error) {
+	tools, run, via, err := s.toolbox(ctx, wsID, n.Tools, nil)
+	if err != nil {
+		return Output{}, err
+	}
 	system, user := stepPrompts(wf, n, previousInput(wf, row), via)
-	fallback := fmt.Sprintf("Simulated output. Connect Claude in Settings to run %s.\n\nIt would follow: %s", n.Title, n.Instruction)
+	fallback := ""
+	if simulate {
+		fallback = fmt.Sprintf("Simulated output. Connect Claude in Settings to run %s.\n\nIt would follow: %s", n.Title, n.Instruction)
+	}
 	var used []string
 	if run != nil {
 		inner := run
@@ -517,19 +552,17 @@ func (s *Server) runStep(w http.ResponseWriter, r *http.Request, c wsCtx) {
 			return inner(ctx, name, in)
 		}
 	}
-	text, simulated, err := s.generateWith(r.Context(), c.WS, system, user, fallback, 1500, tools, run)
+	text, simulated, err := s.generateWith(ctx, wsID, system, user, fallback, maxTokens, tools, run)
 	if err != nil {
-		s.upstreamError(w, r, err)
-		return
+		return Output{}, err
 	}
 	if simulated {
 		used = nil
+		if !simulate {
+			return Output{}, errors.New("Claude is not connected")
+		}
 	}
-	if err := s.repo.SetOutput(r.Context(), c.WS, id, n.ID, Output{Text: text, Simulated: simulated, Used: used}); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, runResponse{StepID: n.ID, Text: text, Simulated: simulated, Used: used})
+	return Output{Text: text, Simulated: simulated, Used: used}, nil
 }
 
 // upstreamError reports a failed Claude call. Its message comes from Anthropic, not from our own internals.

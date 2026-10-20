@@ -141,6 +141,9 @@ func (s *Server) workLoop(ctx context.Context) {
 			s.executeRun(ctx, run)
 			continue
 		}
+		if s.processAuto(ctx) {
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return

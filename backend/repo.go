@@ -562,8 +562,24 @@ func (r *Repo) GetWorkflow(ctx context.Context, wsID, id string) (Workflow, erro
 	if err != nil {
 		return w, err
 	}
-	w.Messages, err = r.RecentMessages(ctx, id, maxMessages)
-	return w, err
+	if w.Messages, err = r.RecentMessages(ctx, id, maxMessages); err != nil {
+		return w, err
+	}
+	st, err := r.ActiveStart(ctx, id)
+	if err != nil {
+		return w, err
+	}
+	queued, err := r.CountQueued(ctx, id)
+	if err != nil {
+		return w, err
+	}
+	if st != nil || queued > 0 {
+		w.Auto = &AutoInfo{Queued: queued}
+		if st != nil {
+			w.Auto.Status, w.Auto.Source = st.Status, st.Source
+		}
+	}
+	return w, nil
 }
 
 func insertWorkflow(ctx context.Context, tx *sql.Tx, wsID, userID, name string, w Workflow) (string, error) {
@@ -661,6 +677,10 @@ func (r *Repo) ReplaceWorkflow(ctx context.Context, wsID, id string, in Workflow
 		outputs, _ := json.Marshal(keep)
 		_, err = tx.ExecContext(ctx, `UPDATE workflows SET name=$3, steps=$4, progress=$5, next_id=$6, outputs=$7, version=version+1, updated_at=now() WHERE id=$1 AND workspace_id=$2`,
 			id, wsID, in.Name, steps, in.Progress, in.NextID, outputs)
+		if err == nil && in.Progress != cur.Progress {
+			// a person moved the run on by hand: an automatic run paused on them carries on from here
+			_, err = tx.ExecContext(ctx, `UPDATE workflow_starts SET status = 'running', locked_until = NULL, run_after = now() WHERE workflow_id = $1 AND status = 'waiting'`, id)
+		}
 		return err
 	})
 	if err != nil {

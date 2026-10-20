@@ -58,8 +58,16 @@ type Workflow struct {
 	NextID   int               `json:"nextId"`
 	Messages []Message         `json:"messages"` // read-only here: chat has its own endpoints
 	Outputs  map[string]Output `json:"outputs"`
-	Version  int               `json:"version"` // bumped on every save; used to detect lost updates
+	Version  int               `json:"version"`        // bumped on every save; used to detect lost updates
+	Auto     *AutoInfo         `json:"auto,omitempty"` // read-only: an automatic run owns this workflow, or starts are waiting for it
 	Updated  string            `json:"updated"`
+}
+
+// AutoInfo says whether the server is running this workflow on its own.
+type AutoInfo struct {
+	Status string `json:"status,omitempty"` // running | waiting, when a start owns the run
+	Source string `json:"source,omitempty"`
+	Queued int    `json:"queued"`
 }
 
 // Workspace holds what all workflows share.

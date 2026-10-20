@@ -122,5 +122,8 @@ func (s *Server) decideStep(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	if _, err := s.repo.AddMessage(r.Context(), c.WS, wf.ID, "", "Claude", "agent", line); err != nil {
 		s.log.Warn("could not note the decision in chat", "err", err)
 	}
+	if ok, err := s.repo.ResumeStart(r.Context(), wf.ID); err == nil && ok {
+		s.wakeWorker()
+	}
 	writeJSON(w, http.StatusOK, summarize(wf))
 }
