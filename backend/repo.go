@@ -489,37 +489,6 @@ func (r *Repo) SetCodeOverrides(ctx context.Context, wsID, userID string, o Code
 	return err
 }
 
-// ---------- a workspace's own OAuth apps ----------
-
-type AppRow struct {
-	ClientID  string
-	SecretEnc []byte
-	Scopes    string
-}
-
-// IntegrationApp returns the workspace's own OAuth app for a provider, or nil when it has none.
-func (r *Repo) IntegrationApp(ctx context.Context, wsID, provider string) (*AppRow, error) {
-	var a AppRow
-	err := r.db.QueryRowContext(ctx, `SELECT client_id, secret_enc, scopes FROM integration_apps WHERE workspace_id = $1 AND provider = $2`, wsID, provider).
-		Scan(&a.ClientID, &a.SecretEnc, &a.Scopes)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	return &a, err
-}
-
-func (r *Repo) SetIntegrationApp(ctx context.Context, wsID, provider, userID string, a AppRow) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO integration_apps (workspace_id, provider, client_id, secret_enc, scopes, updated_by) VALUES ($1,$2,$3,$4,$5,$6)
-		ON CONFLICT (workspace_id, provider) DO UPDATE SET client_id = EXCLUDED.client_id, secret_enc = EXCLUDED.secret_enc, scopes = EXCLUDED.scopes,
-		updated_by = EXCLUDED.updated_by, updated_at = now()`, wsID, provider, a.ClientID, a.SecretEnc, a.Scopes, userID)
-	return err
-}
-
-func (r *Repo) DeleteIntegrationApp(ctx context.Context, wsID, provider string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM integration_apps WHERE workspace_id = $1 AND provider = $2`, wsID, provider)
-	return err
-}
-
 // ---------- workflows ----------
 
 func summarize(w Workflow) Summary {

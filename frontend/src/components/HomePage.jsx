@@ -42,7 +42,7 @@ export default function HomePage({ ws, list, claude, ints, members, canManage, o
   const toolConnected = ints && Object.values(ints).some((s) => s.connected);
   const tasks = [
     { id: 'claude', title: 'Connect Claude', desc: 'Agents need Claude to run for real. Until then their steps are simulated.', done: !!claude?.connected, cta: 'Connect Claude', go: () => onGo('claude'), admin: true },
-    { id: 'tool', title: 'Connect a tool', desc: 'Let agents read from GitHub, GitLab, Jira or Figma. Add the OAuth app once, then sign in.', done: !!toolConnected, cta: 'Connect a tool', go: () => onGo('integrations'), admin: true },
+    { id: 'tool', title: 'Connect a tool', desc: 'Let agents read from GitHub, GitLab, Jira or Figma. Then sign in once.', done: !!toolConnected, cta: 'Connect a tool', go: () => onGo('integrations'), admin: true },
     { id: 'flow', title: 'Build and run a workflow', desc: 'Start from a template, then run it. Agents do some steps and people do others.', done: list.some((w) => w.progress > 0), cta: 'New workflow', go: onNew },
     { id: 'team', title: 'Invite a teammate', desc: 'People can approve steps, edit output and chat on a workflow.', done: members.length > 1, cta: 'Invite', go: onInvite },
   ].filter((t) => canManage || !t.admin);

@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -208,21 +207,15 @@ func apiDo(ctx context.Context, label, method, base, path string, q url.Values, 
 // ---------- status ----------
 
 type integrationStatus struct {
-	Configured    bool   `json:"configured"`
-	Source        string `json:"source,omitempty"`        // whose OAuth app: "workspace" or "server"
-	ClientID      string `json:"clientId,omitempty"`      // never the secret
-	AppScopes     string `json:"appScopes,omitempty"`     // what the app asks for
-	DefaultScopes string `json:"defaultScopes,omitempty"` // what it asks for when none are set
-	CallbackURL   string `json:"callbackUrl"`             // the redirect address to register at the provider
-	Connected     bool   `json:"connected"`
-	Account       string `json:"account,omitempty"`
-	Scopes        string `json:"scopes,omitempty"`
-	ConnectedAt   string `json:"connectedAt,omitempty"`
+	Configured  bool   `json:"configured"`
+	Connected   bool   `json:"connected"`
+	Account     string `json:"account,omitempty"`
+	Scopes      string `json:"scopes,omitempty"`
+	ConnectedAt string `json:"connectedAt,omitempty"`
 }
 
 func (s *Server) statusOf(ctx context.Context, wsID string, p *provider) (integrationStatus, error) {
-	app, source := s.appSource(ctx, wsID, p)
-	st := integrationStatus{Configured: app.Enabled(), Source: source, ClientID: app.ClientID, DefaultScopes: s.cfg.Apps[p.ID].Scopes, AppScopes: app.Scopes, CallbackURL: s.callbackURL(p)}
+	st := integrationStatus{Configured: s.cfg.Apps[p.ID].Enabled()}
 	info, enc, err := s.repo.Integration(ctx, wsID, p.ID)
 	if err != nil {
 		return st, err
@@ -318,9 +311,10 @@ func (s *Server) integrationStart(w http.ResponseWriter, r *http.Request, c wsCt
 	if p == nil {
 		return
 	}
-	app := s.appFor(r.Context(), c.WS, p)
+	app := s.cfg.Apps[p.ID]
 	if !app.Enabled() {
-		writeError(w, http.StatusConflict, fmt.Sprintf("Add the %s OAuth app (client ID and secret) in Settings first.", p.Label))
+		up := strings.ToUpper(p.ID)
+		writeError(w, http.StatusConflict, fmt.Sprintf("This server has no %s OAuth app configured. Set %s_CLIENT_ID and %s_CLIENT_SECRET.", p.Label, up, up))
 		return
 	}
 	nonce := randomToken()
@@ -373,7 +367,7 @@ func (s *Server) integrationCallback(w http.ResponseWriter, r *http.Request) {
 		fail("forbidden", "")
 		return
 	}
-	app := s.appFor(r.Context(), ws, p)
+	app := s.cfg.Apps[p.ID]
 	if !app.Enabled() {
 		fail("failed", ws)
 		return
@@ -426,7 +420,7 @@ func (s *Server) integrationDisconnect(w http.ResponseWriter, r *http.Request, c
 		if plain, err := s.sealer.Open(enc, c.WS+"|"+p.ID); err == nil {
 			var ts tokenSet
 			if json.Unmarshal([]byte(plain), &ts) == nil {
-				app := s.appFor(r.Context(), c.WS, p)
+				app := s.cfg.Apps[p.ID]
 				go p.revoke(app, ts)
 			}
 		}
@@ -471,7 +465,7 @@ func (s *Server) tokensFor(ctx context.Context, wsID string, p *provider) (token
 	if p.refresh == nil || ts.Refresh == "" {
 		return tokenSet{}, reconnect
 	}
-	app := s.appFor(ctx, wsID, p)
+	app := s.cfg.Apps[p.ID]
 	final, err := s.repo.LockIntegration(ctx, wsID, p.ID, func(cur []byte) ([]byte, error) {
 		now, err := s.openTokens(cur, wsID, p)
 		if err != nil {
@@ -529,7 +523,7 @@ func (s *Server) toolbox(ctx context.Context, wsID string, stepTools []string, r
 				if err != nil {
 					return "", s.tokenError(p, err)
 				}
-				return p.run(ctx, s.appFor(ctx, wsID, p), ts, name, in)
+				return p.run(ctx, s.cfg.Apps[p.ID], ts, name, in)
 			}
 		}
 		if rc != nil && rc.Ev.Provider == p.ID && p.postReview != nil {
@@ -558,131 +552,4 @@ func (s *Server) tokenError(p *provider, err error) error {
 	}
 	s.log.Warn("token unavailable", "provider", p.ID, "err", err)
 	return errors.New(cut(err.Error(), 200))
-}
-
-// ---------- the OAuth app behind a tool ----------
-
-// appFor is the OAuth app a workspace uses for a tool: its own when an admin set one in Settings,
-// otherwise the server's from the environment. The provider's address always comes from the server.
-func (s *Server) appFor(ctx context.Context, wsID string, p *provider) OAuthApp {
-	app, _ := s.appSource(ctx, wsID, p)
-	return app
-}
-
-func (s *Server) appSource(ctx context.Context, wsID string, p *provider) (OAuthApp, string) {
-	base := s.cfg.Apps[p.ID]
-	row, err := s.repo.IntegrationApp(ctx, wsID, p.ID)
-	if err != nil {
-		s.log.Error("read oauth app", "provider", p.ID, "err", err)
-		return OAuthApp{AuthURL: base.AuthURL, APIURL: base.APIURL}, "" // not usable, rather than silently another app
-	}
-	if row == nil {
-		if base.Enabled() {
-			return base, "server"
-		}
-		return base, ""
-	}
-	secret, err := s.sealer.Open(row.SecretEnc, wsID+"|app|"+p.ID)
-	if err != nil {
-		s.log.Error("open oauth app secret", "provider", p.ID, "err", err)
-		return OAuthApp{AuthURL: base.AuthURL, APIURL: base.APIURL}, ""
-	}
-	base.ClientID, base.ClientSecret = row.ClientID, secret
-	if row.Scopes != "" {
-		base.Scopes = row.Scopes
-	}
-	return base, "workspace"
-}
-
-var (
-	clientIDPattern = regexp.MustCompile(`^[A-Za-z0-9._~+/=:@-]{1,200}$`)
-	scopesPattern   = regexp.MustCompile(`^[A-Za-z0-9._:/ ,-]{0,300}$`)
-)
-
-// putIntegrationApp saves a workspace's own OAuth app. An empty secret keeps the stored one. When the
-// client changes, an existing connection (made through the old app) is removed, since its tokens
-// cannot be refreshed or revoked with another app.
-func (s *Server) putIntegrationApp(w http.ResponseWriter, r *http.Request, c wsCtx) {
-	p := providerOr404(w, r)
-	if p == nil {
-		return
-	}
-	var req struct {
-		ClientID     string `json:"clientId"`
-		ClientSecret string `json:"clientSecret"`
-		Scopes       string `json:"scopes"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	req.ClientID, req.ClientSecret, req.Scopes = strings.TrimSpace(req.ClientID), strings.TrimSpace(req.ClientSecret), strings.Join(strings.Fields(strings.ReplaceAll(req.Scopes, ",", " ")), " ")
-	if !clientIDPattern.MatchString(req.ClientID) {
-		writeError(w, http.StatusBadRequest, "Enter the client ID of the OAuth app.")
-		return
-	}
-	if len(req.ClientSecret) > 500 || strings.ContainsAny(req.ClientSecret, "\r\n") {
-		writeError(w, http.StatusBadRequest, "That client secret does not look right.")
-		return
-	}
-	if !scopesPattern.MatchString(req.Scopes) {
-		writeError(w, http.StatusBadRequest, "Scopes can only contain letters, numbers and . _ : / -")
-		return
-	}
-	old, err := s.repo.IntegrationApp(r.Context(), c.WS, p.ID)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	row := AppRow{ClientID: req.ClientID, Scopes: req.Scopes}
-	switch {
-	case req.ClientSecret != "":
-		row.SecretEnc = s.sealer.Seal(req.ClientSecret, c.WS+"|app|"+p.ID)
-	case old != nil:
-		row.SecretEnc = old.SecretEnc
-	default:
-		writeError(w, http.StatusBadRequest, "Enter the client secret of the OAuth app.")
-		return
-	}
-	if old == nil || old.ClientID != row.ClientID {
-		s.dropConnection(r.Context(), c.WS, p)
-	}
-	if err := s.repo.SetIntegrationApp(r.Context(), c.WS, p.ID, c.User.ID, row); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	s.integrations(w, r, c)
-}
-
-// deleteIntegrationApp removes the workspace's own app, so it falls back to the server's, if any.
-func (s *Server) deleteIntegrationApp(w http.ResponseWriter, r *http.Request, c wsCtx) {
-	p := providerOr404(w, r)
-	if p == nil {
-		return
-	}
-	s.dropConnection(r.Context(), c.WS, p)
-	if err := s.repo.DeleteIntegrationApp(r.Context(), c.WS, p.ID); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	s.integrations(w, r, c)
-}
-
-// dropConnection forgets the stored sign-in of a tool, revoking it at the provider with the app that made it.
-func (s *Server) dropConnection(ctx context.Context, wsID string, p *provider) {
-	_, enc, err := s.repo.Integration(ctx, wsID, p.ID)
-	if err != nil || enc == nil {
-		return
-	}
-	if err := s.repo.DeleteIntegration(ctx, wsID, p.ID); err != nil {
-		return
-	}
-	if p.revoke != nil {
-		if plain, err := s.sealer.Open(enc, wsID+"|"+p.ID); err == nil {
-			var ts tokenSet
-			if json.Unmarshal([]byte(plain), &ts) == nil {
-				app := s.appFor(ctx, wsID, p)
-				go p.revoke(app, ts)
-			}
-		}
-	}
 }

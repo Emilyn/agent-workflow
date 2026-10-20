@@ -84,8 +84,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/internal/mcp/{token}", s.mcp)
 
 	mux.HandleFunc("GET /api/workspaces/{ws}/integrations", s.inWorkspace("member", s.integrations))
-	mux.HandleFunc("PUT /api/workspaces/{ws}/integrations/{provider}/app", s.inWorkspace("admin", s.putIntegrationApp))
-	mux.HandleFunc("DELETE /api/workspaces/{ws}/integrations/{provider}/app", s.inWorkspace("admin", s.deleteIntegrationApp))
 	mux.HandleFunc("POST /api/workspaces/{ws}/integrations/{provider}/start", s.inWorkspace("admin", s.integrationStart))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/integrations/{provider}", s.inWorkspace("admin", s.integrationDisconnect))
 	mux.HandleFunc("GET /api/integrations/{provider}/callback", s.integrationCallback)

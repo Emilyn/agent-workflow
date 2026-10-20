@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -642,78 +641,5 @@ func TestFailedRefreshAsksToReconnect(t *testing.T) {
 	}
 	if strings.Contains(res[0]["content"].(string), "at-gitlab") || strings.Contains(res[0]["content"].(string), "rt-gitlab") {
 		t.Error("token text in tool error")
-	}
-}
-
-// ---------- OAuth apps set in the UI ----------
-
-func TestWorkspaceOAuthApp(t *testing.T) {
-	e := newEnv(t) // the server has no app of its own
-	admin := e.signup("Ann", "ann@example.com")
-	member := e.signup("Mo", "mo@example.com")
-	e.join(admin, member, "member")
-	path := admin.path("/integrations/github/app")
-
-	member.mustCall(403, "PUT", path, map[string]string{"clientId": "x", "clientSecret": "y"}, nil)
-	for _, bad := range []map[string]string{
-		{"clientId": "", "clientSecret": "s"},
-		{"clientId": "has space", "clientSecret": "s"},
-		{"clientId": "id"}, // no secret yet
-		{"clientId": "id", "clientSecret": "s", "scopes": "repo; rm -rf"},
-		{"clientId": "id", "clientSecret": "line\nbreak"},
-	} {
-		admin.mustCall(400, "PUT", path, bad, nil)
-	}
-
-	var out map[string]integrationStatus
-	admin.mustCall(200, "PUT", path, map[string]string{"clientId": "my-id", "clientSecret": "my-secret", "scopes": "repo, read:user"}, &out)
-	gh := out["github"]
-	if !gh.Configured || gh.Source != "workspace" || gh.ClientID != "my-id" || gh.AppScopes != "repo read:user" || gh.CallbackURL != e.srv.cfg.PublicURL+"/api/integrations/github/callback" {
-		t.Fatalf("%+v", gh)
-	}
-	raw, _ := json.Marshal(out)
-	if strings.Contains(string(raw), "my-secret") {
-		t.Fatal("the client secret came back to the browser")
-	}
-	var enc []byte
-	if err := e.db.QueryRow(`SELECT secret_enc FROM integration_apps WHERE workspace_id = $1`, admin.WS).Scan(&enc); err != nil || bytes.Contains(enc, []byte("my-secret")) {
-		t.Fatalf("secret stored in the clear or missing: %v", err)
-	}
-
-	var start struct{ URL string }
-	admin.mustCall(200, "POST", admin.path("/integrations/github/start"), map[string]string{}, &start)
-	if q := mustURL(start.URL).Query(); q.Get("client_id") != "my-id" || q.Get("scope") != "repo read:user" {
-		t.Fatalf("authorize url %s", start.URL)
-	}
-
-	// saving again without a secret keeps the stored one
-	admin.mustCall(200, "PUT", path, map[string]string{"clientId": "my-id", "scopes": ""}, &out)
-	if app := e.srv.appFor(context.Background(), admin.WS, providers["github"]); app.ClientSecret != "my-secret" || app.Scopes != e.srv.cfg.Apps["github"].Scopes {
-		t.Fatalf("%+v", app)
-	}
-
-	admin.mustCall(200, "DELETE", path, nil, &out)
-	if out["github"].Configured || out["github"].Source != "" {
-		t.Fatalf("%+v", out["github"])
-	}
-	admin.mustCall(409, "POST", admin.path("/integrations/github/start"), map[string]string{}, nil)
-}
-
-func TestChangingTheOAuthAppDropsTheConnection(t *testing.T) {
-	f := newFakeProviders(t)
-	e := newEnv(t, envOpts{providersURL: f.URL})
-	admin := e.signup("Ann", "ann@example.com")
-	connect(t, admin, "github")
-	if !admin.statuses()["github"].Connected {
-		t.Fatal("not connected")
-	}
-	if admin.statuses()["github"].Source != "server" {
-		t.Fatalf("%+v", admin.statuses()["github"])
-	}
-	// the same client: nothing changes. A different one: the old sign-in goes away.
-	admin.mustCall(200, "PUT", admin.path("/integrations/github/app"), map[string]string{"clientId": "other", "clientSecret": "s"}, nil)
-	st := admin.statuses()["github"]
-	if st.Connected || st.Source != "workspace" || st.ClientID != "other" {
-		t.Fatalf("%+v", st)
 	}
 }

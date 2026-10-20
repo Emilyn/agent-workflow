@@ -64,7 +64,7 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 | `ANTHROPIC_API_KEY` | unset | Optional key used by workspaces that haven't connected their own. Everyone on the server then shares it. |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model for agent steps and chat. |
 | `PUBLIC_URL` | `http://localhost:<PORT>` | The address people use in the browser. Providers send them back to `PUBLIC_URL/api/integrations/<provider>/callback`. |
-| `GITHUB_`, `GITLAB_`, `JIRA_`, `FIGMA_` `CLIENT_ID` / `CLIENT_SECRET` | unset | An optional shared OAuth app for each service. Workspaces can instead add their own in Settings → Integrations; a service with neither shows "no OAuth app yet". |
+| `GITHUB_`, `GITLAB_`, `JIRA_`, `FIGMA_` `CLIENT_ID` / `CLIENT_SECRET` | unset | An OAuth app for each service you want to offer. A service without them shows "no OAuth app yet". |
 | `…_SCOPES` | see below | What each OAuth app asks for. |
 | `GITHUB_OAUTH_URL`, `GITHUB_API_URL` | `https://github.com`, `https://api.github.com` | Change for GitHub Enterprise Server. |
 | `GITLAB_URL` | `https://gitlab.com` | Change for a self-managed GitLab. |
@@ -106,8 +106,8 @@ Things to know:
 ## Connecting tools (GitHub, GitLab, Jira, Figma)
 
 1. Create an OAuth app at the service and set its callback URL to `PUBLIC_URL/api/integrations/<provider>/callback` (`github`, `gitlab`, `jira` or `figma`).
-2. Paste its client ID and secret (and, if you like, the scopes) under **Settings → Integrations** in the app. The secret is stored encrypted and never shown again. Each workspace can use its own OAuth app. Or, to share one app across every workspace on the server, put them in `…_CLIENT_ID` and `…_CLIENT_SECRET` and set `PUBLIC_URL`; a workspace's own app overrides it. Changing the client ID disconnects the current sign-in. The service addresses (`GITLAB_URL`, `GITHUB_API_URL` and so on) stay server-only.
-3. An admin opens **Settings → Integrations** (the Settings button in the top bar), chooses **Connect …** and approves on the service's own page. The sign-in is encrypted like the Claude key (bound to the workspace) and never sent to the browser.
+2. Put its client id and secret in the matching `…_CLIENT_ID` and `…_CLIENT_SECRET`, and set `PUBLIC_URL`. OAuth apps are server settings; they are not editable in the app.
+3. An admin opens **Settings → Integrations** (Settings in the sidebar), chooses **Connect …** and approves on the service's own page. The sign-in is encrypted like the Claude key (bound to the workspace) and never sent to the browser.
 4. Give a step the tool: select the step, then **Step settings → Tools and sources**. When it runs, Claude can call that service's read-only tools, and the step's output lists which were used.
 
 | Service | Default scopes | Where to create the app | Read-only tools |

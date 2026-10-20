@@ -439,13 +439,6 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     window.location.href = url;
   };
 
-  const saveToolApp = async (id, app) => {
-    setInts(await api.setIntegrationApp(wsId, id, app)); // throws with a readable message when it is refused
-  };
-  const removeToolApp = async (id) => {
-    setInts(await api.deleteIntegrationApp(wsId, id));
-  };
-
   const disconnectTool = async (id) => {
     setInts(await api.integrationDisconnect(wsId, id));
   };
@@ -721,8 +714,6 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           onDisconnectClaude={disconnectClaude}
           onClaudeMode={changeClaudeMode}
           onClaudeCode={saveClaudeCode}
-          onSaveApp={saveToolApp}
-          onRemoveApp={removeToolApp}
           onRefreshClaude={refreshClaude}
           onConnect={connectTool}
           onDisconnect={disconnectTool}

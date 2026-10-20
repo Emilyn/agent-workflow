@@ -115,7 +115,7 @@ func (s *Server) createTrigger(w http.ResponseWriter, r *http.Request, c wsCtx) 
 	// Try to register the webhook; if the account or the address does not allow it, the admin sets it up by hand.
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	if hookID, err := p.createHook(ctx, s.appFor(ctx, c.WS, p), ts, req.Project, s.hookURL(id), secret); err != nil {
+	if hookID, err := p.createHook(ctx, s.cfg.Apps[p.ID], ts, req.Project, s.hookURL(id), secret); err != nil {
 		t.HookError = cut(err.Error(), 300)
 	} else {
 		t.HookID, t.HookStatus = hookID, "registered"
@@ -124,7 +124,7 @@ func (s *Server) createTrigger(w http.ResponseWriter, r *http.Request, c wsCtx) 
 		var pe *pq.Error
 		if errors.As(err, &pe) && pe.Code == "23505" {
 			if t.HookID != "" { // do not leave a hook behind that nothing listens to
-				_ = p.deleteHook(ctx, s.appFor(ctx, c.WS, p), ts, req.Project, t.HookID)
+				_ = p.deleteHook(ctx, s.cfg.Apps[p.ID], ts, req.Project, t.HookID)
 			}
 			writeError(w, http.StatusConflict, "That workflow already has a trigger for this project.")
 			return
@@ -177,7 +177,7 @@ func (s *Server) deleteTrigger(w http.ResponseWriter, r *http.Request, c wsCtx) 
 		if p := providers[t.Provider]; p != nil {
 			if ts, err := s.tokensFor(r.Context(), c.WS, p); err == nil {
 				ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-				_ = p.deleteHook(ctx, s.appFor(ctx, c.WS, p), ts, t.Project, t.HookID)
+				_ = p.deleteHook(ctx, s.cfg.Apps[p.ID], ts, t.Project, t.HookID)
 				cancel()
 			}
 		}
@@ -313,7 +313,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request, c wsCtx) {
 		writeError(w, http.StatusTooManyRequests, "too many runs are waiting")
 		return
 	}
-	ev, err := p.fetchChange(r.Context(), s.appFor(r.Context(), c.WS, p), ts, req.Project, req.Number)
+	ev, err := p.fetchChange(r.Context(), s.cfg.Apps[p.ID], ts, req.Project, req.Number)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, cut(err.Error(), 200))
 		return
