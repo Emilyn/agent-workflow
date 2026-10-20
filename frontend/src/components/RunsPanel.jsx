@@ -6,7 +6,7 @@ import { REVIEW_HOSTS } from './reviewHosts.js';
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : '');
 const pillFor = (status) => ({ done: 'done', running: 'running', queued: 'queued', failed: 'waiting' }[status] || 'queued');
 
-function ActionCard({ a, onApprove, onDiscard, busy }) {
+export function ActionCard({ a, onApprove, onDiscard, busy }) {
   return (
     <div className="kv" data-testid="review-draft" style={{ gap: 8, padding: 12, border: '1px solid var(--line-2)', borderRadius: 12, background: 'var(--card)' }}>
       <div className="row g8" style={{ justifyContent: 'space-between' }}>

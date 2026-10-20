@@ -256,8 +256,9 @@ func (r *Repo) GetRun(ctx context.Context, wsID, id string) (Run, error) {
 	return run, err
 }
 
+// ListRuns returns the newest runs of one workflow, or of the whole workspace when workflowID is empty.
 func (r *Repo) ListRuns(ctx context.Context, wsID, workflowID string, limit int) ([]Run, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT `+runCols+` FROM runs WHERE workspace_id = $1 AND workflow_id = $2 ORDER BY created_at DESC LIMIT $3`, wsID, workflowID, limit)
+	rows, err := r.db.QueryContext(ctx, `SELECT `+runCols+` FROM runs WHERE workspace_id = $1 AND ($2 = '' OR workflow_id = $2) ORDER BY created_at DESC LIMIT $3`, wsID, workflowID, limit)
 	if err != nil {
 		return nil, err
 	}

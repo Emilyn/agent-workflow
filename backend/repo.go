@@ -534,6 +534,14 @@ func summarize(w Workflow) Summary {
 			}
 		}
 	}
+	if w.Progress < len(w.Steps) {
+		for _, n := range w.Steps[w.Progress] {
+			if n.Kind == "human" {
+				sum.WaitingOn, sum.WaitingTitle = n.Assignee, n.Title
+				break
+			}
+		}
+	}
 	return sum
 }
 

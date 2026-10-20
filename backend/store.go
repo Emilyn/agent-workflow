@@ -78,6 +78,9 @@ type Summary struct {
 	People   int    `json:"people"`
 	Progress int    `json:"progress"`
 	Updated  string `json:"updated"`
+	// The step a person has to do next, when the run is paused on one.
+	WaitingOn    string `json:"waitingOn,omitempty"` // the assignee
+	WaitingTitle string `json:"waitingTitle,omitempty"`
 }
 
 var (

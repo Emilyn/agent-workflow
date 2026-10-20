@@ -269,6 +269,16 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request, c wsCtx) {
 	writeJSON(w, http.StatusOK, runs)
 }
 
+// listWorkspaceRuns is the newest runs of every workflow, for the Runs page.
+func (s *Server) listWorkspaceRuns(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	runs, err := s.repo.ListRuns(r.Context(), c.WS, "", 60)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, runs)
+}
+
 // startRun reviews one pull or merge request now, without waiting for a webhook. It is also the way to try the setup.
 // Manual runs always save drafts: posting directly is a decision for the trigger's admin.
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request, c wsCtx) {

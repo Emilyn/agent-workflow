@@ -71,6 +71,7 @@ export const api = {
   createTrigger: (ws, body) => request('POST', `${w(ws)}/triggers`, body),
   patchTrigger: (ws, id, body) => request('PATCH', `${w(ws)}/triggers/${id}`, body),
   deleteTrigger: (ws, id) => request('DELETE', `${w(ws)}/triggers/${id}`),
+  workspaceRuns: (ws) => request('GET', `${w(ws)}/runs`),
   runs: (ws, wf) => request('GET', `${w(ws)}/workflows/${wf}/runs`),
   startRun: (ws, wf, body) => request('POST', `${w(ws)}/workflows/${wf}/runs`, body),
   rerun: (ws, runId) => request('POST', `${w(ws)}/runs/${runId}/rerun`, {}),

@@ -258,3 +258,22 @@ button.wf-row:focus-visible { outline: 3px solid #7A9CC6; outline-offset: -3px; 
 @media (max-width: 760px) { .adder-menu { left: 50%; transform: translateX(-50%); top: calc(100% - 8px); } }
 .task.draft-step { border-color: var(--ok-fg); background: #F3F8F4; }
 .task.draft-step .task-mark { background: var(--ok-fg); color: #fff; }
+
+/* runs page */
+.runs-page { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.runs-head { padding: 32px 40px 16px; display: flex; flex-direction: column; gap: 14px; }
+.runs-body { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--line); }
+.runs-list { list-style: none; margin: 0; padding: 0; flex: 0 0 400px; max-width: 40%; border-right: 1px solid var(--line); overflow-y: auto; }
+.run-item { width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 14px 24px; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--line); }
+.run-item:hover { background: var(--paper-2); }
+.run-item.on { background: var(--card); box-shadow: inset 3px 0 0 var(--accent); }
+.run-item:focus-visible { outline: 3px solid #7A9CC6; outline-offset: -3px; }
+.run-item-title { font-size: 15px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.run-detail { flex: 1; min-width: 0; padding: 24px 40px 48px; overflow-y: auto; }
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.timeline li { display: flex; gap: 14px; align-items: flex-start; }
+.tl-dot { flex: 0 0 26px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; background: var(--chip); color: var(--ink-2); }
+.tl-dot.done { background: var(--ok-fg); color: #fff; }
+.tl-dot.now { background: var(--accent); color: #fff; }
+@media (max-width: 900px) { .runs-body { flex-direction: column; } .runs-list { flex: none; max-width: none; max-height: 300px; border-right: 0; border-bottom: 1px solid var(--line); } .runs-head, .run-detail { padding-left: 16px; padding-right: 16px; } }
+.nav-badge { margin-left: auto; min-width: 20px; padding: 0 7px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; line-height: 20px; text-align: center; }

@@ -4,10 +4,11 @@ import Canvas from './components/Canvas.jsx';
 import Header from './components/Header.jsx';
 import HomePage from './components/HomePage.jsx';
 import NewWorkflowPage from './components/NewWorkflowPage.jsx';
+import RunsPage, { needsYou } from './components/RunsPage.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Side from './components/Side.jsx';
 import SettingsPage from './components/SettingsPage.jsx';
-import { hashFor, newHash, parseHash, settingsHash } from './route.js';
+import { hashFor, newHash, parseHash, runsHash, settingsHash } from './route.js';
 import {
   ROLE_RANK,
   LIVE_TOOLS,
@@ -40,6 +41,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const [selected, setSelected] = useState(null);
   const [tab, setTab] = useState('chat');
   const [page, setPage] = useState(() => parseHash().page || 'home'); // home | new | editor | settings
+  const [wsRuns, setWsRuns] = useState([]); // newest runs of every workflow
+  const [busyAction, setBusyAction] = useState('');
   const [copySource, setCopySource] = useState(null); // the workflow offered as "copy of" on the new-workflow page
   const [section, setSection] = useState(() => parseHash().section || 'claude');
   const [form, setForm] = useState(blankForm());
@@ -308,6 +311,22 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   useEffect(() => {
     if (tab === 'team' || tab === 'settings') api.members(wsId).then(setMembers).catch(() => {});
   }, [tab, selected, wsId]);
+
+  // The Runs page and its badge: newest runs and which workflows are paused on a person.
+  const refreshInbox = useCallback(async () => {
+    try {
+      const [r, l] = await Promise.all([api.workspaceRuns(wsId), api.listWorkflows(wsId)]);
+      setWsRuns(r);
+      setList(l);
+    } catch (e) {
+      if (e.status === 401) throw e;
+    }
+  }, [wsId]);
+  useEffect(() => {
+    refreshInbox().catch(() => {});
+    const t = setInterval(() => { if (!document.hidden && !dirty.current) refreshInbox().catch(() => {}); }, 8000);
+    return () => clearInterval(t);
+  }, [refreshInbox]);
 
   if (loadError) {
     return (
@@ -588,6 +607,29 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     onSignOut: async () => { await flush().catch(() => {}); await onSignOut(); },
   };
 
+  const decide = (fn) => async (a) => {
+    setBusyAction(a.id);
+    setError('');
+    try {
+      await fn(wsId, a.id);
+    } catch (e) {
+      setError(e.message);
+    }
+    setBusyAction('');
+    refreshInbox().catch(() => {});
+  };
+  const approveAction = decide(api.approveAction);
+  const discardAction = decide(api.discardAction);
+  const rerunRun = async (run) => {
+    setError('');
+    try {
+      await api.rerun(wsId, run.id);
+    } catch (e) {
+      setError(e.message);
+    }
+    refreshInbox().catch(() => {});
+  };
+
   const goFromSidebar = async (id) => {
     try {
       await flush();
@@ -595,6 +637,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
       setError(e.message);
     }
     if (id === 'workflows') goHome();
+    else if (id === 'runs') setMain('runs', runsHash(wsId));
     else openSettings(id === 'settings' ? 'claude' : id);
   };
 
@@ -602,6 +645,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     <div className="app">
       <Sidebar
         workspaceMenu={workspaceMenu}
+        badge={needsYou(list, wsRuns, user.name)}
         page={page}
         section={section}
         workflows={list}
@@ -648,6 +692,9 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           onGo={(sec) => openSettings(sec)}
           onInvite={() => openSettings('team')}
         />
+      )}
+      {page === 'runs' && (
+        <RunsPage list={list} runs={wsRuns} userName={user.name} busyAction={busyAction} onApprove={approveAction} onDiscard={discardAction} onRerun={rerunRun} onOpenWorkflow={openFromList} />
       )}
       {page === 'new' && (
         <NewWorkflowPage currentName={copySource?.name || ''} canDraft={!!claude?.connected} onDraft={(text) => api.draftWorkflow(wsId, text)} onCreate={createWorkflow} onCancel={goHome} />

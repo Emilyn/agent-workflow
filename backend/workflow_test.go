@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -377,5 +378,71 @@ func TestSettingsAreSanitised(t *testing.T) {
 		if status := p.call("PUT", p.path("/settings"), ws, nil); status != 400 {
 			t.Errorf("%s: %d", name, status)
 		}
+	}
+}
+
+func TestSummaryShowsWhoTheRunWaitsOn(t *testing.T) {
+	e := newEnv(t)
+	p := e.signup("Ann", "ann@example.com")
+	var wf Workflow
+	p.mustCall(200, "GET", p.path("/workflows/"+p.firstWorkflow().ID), nil, &wf)
+	row := -1
+	for i, g := range wf.Steps {
+		for j := range g {
+			if g[j].Kind == "human" {
+				wf.Steps[i][j].Assignee = "Mo"
+				if row < 0 {
+					row = i
+				}
+			}
+		}
+	}
+	if row < 0 {
+		t.Skip("the starting workflow has no person step")
+	}
+	if s := p.firstWorkflow(); s.WaitingOn != "" {
+		t.Fatalf("waiting before the run reached the person: %+v", s)
+	}
+	wf.Progress = row
+	p.mustCall(200, "PUT", p.path("/workflows/"+wf.ID), wf, nil)
+	if s := p.firstWorkflow(); s.WaitingOn != "Mo" || s.WaitingTitle == "" {
+		t.Fatalf("%+v", s)
+	}
+	wf.Progress = len(wf.Steps)
+	p.mustCall(200, "GET", p.path("/workflows/"+wf.ID), nil, &wf) // pick up the new version
+	wf.Progress = len(wf.Steps)
+	p.mustCall(200, "PUT", p.path("/workflows/"+wf.ID), wf, nil)
+	if s := p.firstWorkflow(); s.WaitingOn != "" {
+		t.Fatalf("still waiting after the run finished: %+v", s)
+	}
+}
+
+func TestWorkspaceRunsListsEveryWorkflow(t *testing.T) {
+	e := newEnv(t)
+	p := e.signup("Ann", "ann@example.com")
+	other := e.signup("Zed", "zed@example.com")
+	first := p.firstWorkflow()
+	var second Workflow
+	p.mustCall(201, "POST", p.path("/workflows"), map[string]string{"name": "Second"}, &second)
+	for i, wfID := range []string{first.ID, second.ID} {
+		ok, err := e.repo.EnqueueRun(context.Background(), Run{ID: newLongID("run"), WorkspaceID: p.WS, WorkflowID: wfID, Source: "manual", ReviewMode: "draft", Input: changeEvent{Provider: "github", Project: "a/b", Number: i + 1, Title: "t"}}, "", p.User.ID)
+		if err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	var runs []Run
+	p.mustCall(200, "GET", p.path("/runs"), nil, &runs)
+	if len(runs) != 2 || runs[0].WorkflowID == runs[1].WorkflowID {
+		t.Fatalf("%+v", runs)
+	}
+	var theirs []Run
+	other.mustCall(200, "GET", other.path("/runs"), nil, &theirs)
+	if len(theirs) != 0 {
+		t.Fatalf("another workspace saw %d runs", len(theirs))
+	}
+	var onlyFirst []Run
+	p.mustCall(200, "GET", p.path("/workflows/"+first.ID+"/runs"), nil, &onlyFirst)
+	if len(onlyFirst) != 1 || onlyFirst[0].WorkflowID != first.ID {
+		t.Fatalf("%+v", onlyFirst)
 	}
 }

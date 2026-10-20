@@ -8,8 +8,8 @@ const FILTERS = [
 ];
 
 export const stateOf = (w) => (w.steps && w.progress >= w.steps ? 'done' : w.progress > 0 ? 'active' : 'new');
-const STATE_LABEL = (w) => ({ done: 'Done', active: `Step ${w.progress + 1} of ${w.steps}`, new: 'Not run yet' }[stateOf(w)]);
-const PILL = { done: 'done', active: 'running', new: 'queued' };
+const STATE_LABEL = (w) => (w.waitingOn ? `Waiting on ${w.waitingOn}` : { done: 'Done', active: `Step ${w.progress + 1} of ${w.steps}`, new: 'Not run yet' }[stateOf(w)]);
+const pillOf = (w) => (w.waitingOn ? 'waiting' : { done: 'done', active: 'running', new: 'queued' }[stateOf(w)]);
 
 export function ago(iso) {
   if (!iso) return '';
@@ -114,7 +114,7 @@ export default function HomePage({ ws, list, claude, ints, members, canManage, o
                   <strong className="wf-row-name">{w.name}</strong>
                   <span className="small muted">{w.steps} steps</span>
                 </span>
-                <span><span className={`pill ${PILL[stateOf(w)]}`}>{STATE_LABEL(w)}</span></span>
+                <span><span className={`pill ${pillOf(w)}`}>{STATE_LABEL(w)}</span></span>
                 <span className="small">{w.agents} agent{w.agents === 1 ? '' : 's'} · {w.people} {w.people === 1 ? 'person' : 'people'}</span>
                 <span className="small muted">{ago(w.updated)}</span>
               </button>

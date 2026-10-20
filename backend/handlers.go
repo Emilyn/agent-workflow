@@ -95,6 +95,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.patchTrigger))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.deleteTrigger))
 	mux.HandleFunc("POST /api/hooks/{id}", s.webhook)
+	mux.HandleFunc("GET /api/workspaces/{ws}/runs", s.inWorkspace("member", s.listWorkspaceRuns))
 	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}/runs", s.inWorkspace("member", s.listRuns))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/runs", s.inWorkspace("member", s.startRun))
 	mux.HandleFunc("POST /api/workspaces/{ws}/runs/{rid}/rerun", s.inWorkspace("member", s.rerun))
