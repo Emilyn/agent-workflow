@@ -1,5 +1,6 @@
 import { KIND_LABEL, runSummary, statusFor } from '../workflow.js';
 import { Clock, Person, Spark } from './Icons.jsx';
+import StepAdder from './StepAdder.jsx';
 
 export function Pill({ status, node }) {
   const text = { done: 'Done', running: 'Running', queued: 'Queued', waiting: `Waiting on ${node?.assignee || 'an assignee'}` }[status];
@@ -12,7 +13,11 @@ function Badge({ kind }) {
   return <span className="badge trigger"><Clock /></span>;
 }
 
-export default function Canvas({ doc, selected, busy, onSelect, onCreateAgent }) {
+export default function Canvas({ doc, selected, busy, onSelect, onCreateAgent, onAddAgent, onAddPerson }) {
+  // A step can go anywhere except before steps that already ran.
+  const adder = (idx) => (
+    <StepAdder doc={doc} disabled={busy || idx < doc.progress} onAddAgent={(a) => onAddAgent(a, idx)} onAddPerson={(p) => onAddPerson(p, idx)} onCreateAgent={onCreateAgent} />
+  );
   const { done, waiting, total } = runSummary(doc);
   const runPill = done ? (
     <span className="pill done">Run complete</span>
@@ -58,11 +63,10 @@ export default function Canvas({ doc, selected, busy, onSelect, onCreateAgent })
                 </button>
               ))}
             </div>
-            {r < doc.steps.length - 1 && <div className="link" />}
+            {r < doc.steps.length - 1 && adder(r + 1)}
           </div>
         ))}
-        <div className="link" />
-        <button className="btn add-step" type="button" onClick={onCreateAgent}>+ Create an agent for a new step</button>
+        {adder(doc.steps.length)}
       </div>
     </main>
   );

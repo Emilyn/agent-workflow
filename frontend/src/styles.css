@@ -246,3 +246,13 @@ button.wf-row:focus-visible { outline: 3px solid #7A9CC6; outline-offset: -3px; 
   .wf-row > :nth-child(3), .wf-row > :nth-child(4) { display: none; }
   .wf-row.head { display: none; }
 }
+
+/* "+" between steps */
+.adder { position: relative; display: flex; flex-direction: column; align-items: center; }
+.adder .link { height: 14px; }
+.adder-btn { width: 32px; height: 32px; border-radius: 50%; border: 1.5px solid var(--line-2); background: var(--card); color: var(--ink-2); font-size: 20px; line-height: 1; padding: 0; display: flex; align-items: center; justify-content: center; }
+.adder-btn:hover:not(:disabled), .adder-btn[aria-expanded='true'] { border-color: var(--ink); color: var(--ink); }
+.adder-btn:disabled { opacity: .4; cursor: not-allowed; }
+.adder-btn:focus-visible { outline: 3px solid #7A9CC6; outline-offset: 2px; }
+.adder-menu { top: 50%; left: calc(100% + 12px); transform: translateY(-20%); width: 320px; max-height: 70vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 760px) { .adder-menu { left: 50%; transform: translateX(-50%); top: calc(100% - 8px); } }

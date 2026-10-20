@@ -5,7 +5,6 @@ import Header from './components/Header.jsx';
 import HomePage from './components/HomePage.jsx';
 import NewWorkflowPage from './components/NewWorkflowPage.jsx';
 import Sidebar from './components/Sidebar.jsx';
-import Palette from './components/Palette.jsx';
 import Side from './components/Side.jsx';
 import SettingsPage from './components/SettingsPage.jsx';
 import { hashFor, newHash, parseHash, settingsHash } from './route.js';
@@ -17,6 +16,7 @@ import {
   blankForm,
   findNode,
   fullName,
+  insertAt,
   insertStep,
   mergeMessages,
   patchNode,
@@ -353,17 +353,17 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     setTab('settings');
   };
 
-  const addAgent = (agent) => {
+  const addAgent = (agent, at) => {
     const n = agentNode(view, agent);
-    const { doc: next, idx } = insertStep(doc, selected, n);
+    const { doc: next, idx } = insertAt(doc, at, n);
     update(() => next);
     note(`${agent.name} is now step ${idx + 1}. It will receive the output of the step before it.`);
     select(n.id);
   };
 
-  const addPerson = (step) => {
+  const addPerson = (step, at) => {
     const n = personNode(view, step, user.name);
-    const { doc: next, idx } = insertStep(doc, selected, n);
+    const { doc: next, idx } = insertAt(doc, at, n);
     update(() => next);
     note(`${step.name} is now step ${idx + 1}, assigned to ${user.name}. You can reassign it in Step settings.`);
     select(n.id);
@@ -678,8 +678,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
         />
       ) : page === 'editor' ? (
       <div className="body">
-        <Palette doc={view} onAddAgent={addAgent} onAddPerson={addPerson} onCreateAgent={openBuilder} />
-        <Canvas doc={view} selected={node.id} busy={busy} onSelect={select} onCreateAgent={openBuilder} />
+        <Canvas doc={view} selected={node.id} busy={busy} onSelect={select} onCreateAgent={openBuilder} onAddAgent={addAgent} onAddPerson={addPerson} />
         <Side
           tab={tab}
           onTab={setTab}

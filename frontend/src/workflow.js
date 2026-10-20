@@ -90,6 +90,14 @@ export function insertStep(doc, selectedId, node) {
   return { doc: { ...doc, steps, nextId: doc.nextId + 1 }, idx };
 }
 
+// Inserts a one-step row before row idx. Rows that already ran stay where they are, so idx cannot be earlier than the current step.
+export function insertAt(doc, idx, node) {
+  const at = Math.min(doc.steps.length, Math.max(doc.progress, idx));
+  const steps = [...doc.steps];
+  steps.splice(at, 0, [node]);
+  return { doc: { ...doc, steps, nextId: doc.nextId + 1 }, idx: at };
+}
+
 export function removeStep(doc, id) {
   let progress = doc.progress;
   const steps = [];
