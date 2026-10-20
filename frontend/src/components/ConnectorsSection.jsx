@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 // Other sources: what agents can read on the web, and remote MCP servers an admin adds.
-export default function ConnectorsSection({ connectors, canManage, onAdd, onRefresh, onTools, onDelete }) {
+export default function ConnectorsSection({ connectors, canManage, onAdd, onRefresh, onTools, onDelete, onSignIn }) {
   if (!connectors) return null;
   return (
     <section className="col g16" aria-labelledby="other-sources">
@@ -12,7 +12,7 @@ export default function ConnectorsSection({ connectors, canManage, onAdd, onRefr
       <div className="settings-grid">
         <WebCard web={connectors.web} />
         {connectors.mcp.map((c) => (
-          <McpCard key={c.id} c={c} canManage={canManage} onRefresh={onRefresh} onTools={onTools} onDelete={onDelete} />
+          <McpCard key={c.id} c={c} canManage={canManage} onRefresh={onRefresh} onTools={onTools} onDelete={onDelete} onSignIn={onSignIn} />
         ))}
       </div>
       {canManage ? <AddMcp onAdd={onAdd} /> : <span className="small muted">Only workspace admins can add connectors.</span>}
@@ -37,7 +37,7 @@ function WebCard({ web }) {
   );
 }
 
-function McpCard({ c, canManage, onRefresh, onTools, onDelete }) {
+function McpCard({ c, canManage, onRefresh, onTools, onDelete, onSignIn }) {
   const [picked, setPicked] = useState(() => new Set(c.tools.filter((t) => t.enabled).map((t) => t.name)));
   const [working, setWorking] = useState('');
   const [error, setError] = useState('');
@@ -65,6 +65,8 @@ function McpCard({ c, canManage, onRefresh, onTools, onDelete }) {
     });
   };
   const save = run('save', () => onTools(c.id, [...picked]));
+  const signIn = run('signin', () => onSignIn(c.id));
+  const needsSignIn = c.auth === 'oauth' && !c.signedIn;
   const refresh = run('refresh', async () => {
     await onRefresh(c.id);
   });
@@ -75,11 +77,12 @@ function McpCard({ c, canManage, onRefresh, onTools, onDelete }) {
       <div className="col g6">
         <div className="row wrap g8">
           <strong style={{ fontSize: 16 }}>{c.name}</strong>
-          <span className={`pill ${c.enabledCount > 0 ? 'done' : 'queued'}`} style={{ padding: '2px 10px' }}>{c.enabledCount > 0 ? `${c.enabledCount} tool${c.enabledCount === 1 ? '' : 's'} on` : 'No tools on'}</span>
+          <span className={`pill ${needsSignIn ? 'waiting' : c.enabledCount > 0 ? 'done' : 'queued'}`} style={{ padding: '2px 10px' }}>{needsSignIn ? 'Needs sign-in' : c.enabledCount > 0 ? `${c.enabledCount} tool${c.enabledCount === 1 ? '' : 's'} on` : 'No tools on'}</span>
         </div>
-        <span className="small muted">{c.serverName ? `${c.serverName} · ` : ''}{c.host}{c.hasToken ? ' · token saved' : ''}</span>
+        <span className="small muted">{c.serverName ? `${c.serverName} · ` : ''}{c.host}{c.hasToken ? ' · token saved' : ''}{c.auth === 'oauth' && c.signedIn ? ' · signed in with OAuth' : ''}</span>
         {c.error && <span className="alert" role="alert">Last refresh failed: {c.error}</span>}
       </div>
+      {needsSignIn && <span className="alert" role="alert">{canManage ? 'Sign in to let agents use this server. Its sign-in has not been completed or has expired.' : 'An admin needs to sign in to this server before agents can use it.'}</span>}
       {changedCount > 0 && <span className="alert" role="alert">{changedCount} tool{changedCount === 1 ? ' was' : 's were'} changed by the server and switched off. Read {changedCount === 1 ? 'it' : 'them'} again before switching on.</span>}
       {c.tools.length === 0 ? <span className="small muted">This server offers no tools.</span> : (
         <ul className="people" aria-label={`Tools of ${c.name}`}>
@@ -99,8 +102,9 @@ function McpCard({ c, canManage, onRefresh, onTools, onDelete }) {
       {saved && <span className="ok">Saved.</span>}
       {canManage && (
         <div className="row g8 wrap">
-          <button type="button" className="btn primary sm" disabled={!!working} onClick={save}>{working === 'save' ? 'Saving…' : 'Save tools'}</button>
-          <button type="button" className="btn sm" disabled={!!working} onClick={refresh}>{working === 'refresh' ? 'Refreshing…' : 'Refresh tools'}</button>
+          {c.auth === 'oauth' && <button type="button" className={`btn sm${needsSignIn ? ' primary' : ''}`} disabled={!!working} onClick={signIn}>{working === 'signin' ? 'Opening…' : needsSignIn ? 'Sign in' : 'Sign in again'}</button>}
+          {!needsSignIn && <button type="button" className="btn primary sm" disabled={!!working} onClick={save}>{working === 'save' ? 'Saving…' : 'Save tools'}</button>}
+          {!needsSignIn && <button type="button" className="btn sm" disabled={!!working} onClick={refresh}>{working === 'refresh' ? 'Refreshing…' : 'Refresh tools'}</button>}
           {!confirm ? (
             <button type="button" className="btn sm danger" disabled={!!working} onClick={() => setConfirm(true)}>Remove</button>
           ) : (
@@ -117,7 +121,8 @@ function McpCard({ c, canManage, onRefresh, onTools, onDelete }) {
 }
 
 function AddMcp({ onAdd }) {
-  const [form, setForm] = useState({ name: '', url: '', token: '', headerName: '' });
+  const [form, setForm] = useState({ name: '', url: '', token: '', headerName: '', clientId: '', clientSecret: '', scopes: '' });
+  const [how, setHow] = useState('token'); // token | oauth
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
   const set = (k) => (e) => { setForm({ ...form, [k]: e.target.value }); setError(''); };
@@ -127,8 +132,11 @@ function AddMcp({ onAdd }) {
     setWorking(true);
     setError('');
     try {
-      await onAdd({ name: form.name.trim(), url: form.url.trim(), token: form.token.trim(), headerName: form.headerName.trim() });
-      setForm({ name: '', url: '', token: '', headerName: '' });
+      const base = { name: form.name.trim(), url: form.url.trim() };
+      await onAdd(how === 'oauth'
+        ? { ...base, oauth: true, clientId: form.clientId.trim(), clientSecret: form.clientSecret.trim(), scopes: form.scopes.trim() }
+        : { ...base, token: form.token.trim(), headerName: form.headerName.trim() }); // for OAuth this leaves the page to sign in
+      setForm({ name: '', url: '', token: '', headerName: '', clientId: '', clientSecret: '', scopes: '' });
     } catch (err) {
       setError(err.message);
     }
@@ -144,18 +152,45 @@ function AddMcp({ onAdd }) {
         <input id="mcp-name" className="field" required value={form.name} onChange={set('name')} placeholder="Company docs" autoComplete="off" />
         <label className="lbl" htmlFor="mcp-url">Server address</label>
         <input id="mcp-url" className="field" required value={form.url} onChange={set('url')} placeholder="https://mcp.example.com/mcp" autoComplete="off" spellCheck={false} />
-        <label className="lbl" htmlFor="mcp-token">Token (optional)</label>
-        <input id="mcp-token" className="field" type="password" value={form.token} onChange={set('token')} autoComplete="off" spellCheck={false} placeholder="Sent as a bearer token" />
-        <details className="disclose">
-          <summary>Advanced</summary>
-          <div className="inner">
-            <label className="lbl" htmlFor="mcp-header">Send the token in this header instead of Authorization</label>
-            <input id="mcp-header" className="field" value={form.headerName} onChange={set('headerName')} placeholder="X-API-Key" autoComplete="off" spellCheck={false} />
+        <fieldset className="col g6" style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend className="lbl" style={{ marginBottom: 6 }}>How does it sign in?</legend>
+          <div className="seg" role="group" aria-label="How does it sign in?">
+            <button type="button" className={how === 'token' ? 'on' : ''} aria-pressed={how === 'token'} onClick={() => setHow('token')}>Token or none</button>
+            <button type="button" className={how === 'oauth' ? 'on' : ''} aria-pressed={how === 'oauth'} onClick={() => setHow('oauth')}>Sign in with OAuth</button>
           </div>
-        </details>
+        </fieldset>
+        {how === 'token' ? (
+          <>
+            <label className="lbl" htmlFor="mcp-token">Token (optional)</label>
+            <input id="mcp-token" className="field" type="password" value={form.token} onChange={set('token')} autoComplete="off" spellCheck={false} placeholder="Sent as a bearer token" />
+            <details className="disclose">
+              <summary>Advanced</summary>
+              <div className="inner">
+                <label className="lbl" htmlFor="mcp-header">Send the token in this header instead of Authorization</label>
+                <input id="mcp-header" className="field" value={form.headerName} onChange={set('headerName')} placeholder="X-API-Key" autoComplete="off" spellCheck={false} />
+              </div>
+            </details>
+          </>
+        ) : (
+          <>
+            <span className="small muted">You will be sent to the service to sign in and approve access. The whole workspace then uses that account, so sign in with one you are happy to share.</span>
+            <details className="disclose">
+              <summary>Advanced</summary>
+              <div className="inner">
+                <span className="small muted">Most servers let this app register itself. If yours does not, create an OAuth client there with the redirect address <code>{window.location.origin}/api/connectors/oauth/callback</code> and enter it here.</span>
+                <label className="lbl" htmlFor="mcp-cid">Client ID</label>
+                <input id="mcp-cid" className="field" value={form.clientId} onChange={set('clientId')} autoComplete="off" spellCheck={false} />
+                <label className="lbl" htmlFor="mcp-csecret">Client secret (if it has one)</label>
+                <input id="mcp-csecret" className="field" type="password" value={form.clientSecret} onChange={set('clientSecret')} autoComplete="off" spellCheck={false} />
+                <label className="lbl" htmlFor="mcp-scopes">Permissions (scopes), if the service needs them</label>
+                <input id="mcp-scopes" className="field" value={form.scopes} onChange={set('scopes')} autoComplete="off" spellCheck={false} />
+              </div>
+            </details>
+          </>
+        )}
         {error && <span className="alert" role="alert">{error}</span>}
-        <button type="submit" className="btn primary sm" style={{ alignSelf: 'flex-start' }} disabled={working}>{working ? 'Connecting…' : 'Connect'}</button>
-        <span className="small muted">The token is stored encrypted and never shown again. Only https addresses on the public internet are accepted unless the person running the server allows private ones.</span>
+        <button type="submit" className="btn primary sm" style={{ alignSelf: 'flex-start' }} disabled={working}>{working ? 'Connecting…' : how === 'oauth' ? 'Continue to sign in' : 'Connect'}</button>
+        <span className="small muted">Tokens are stored encrypted and never shown again. Only https addresses on the public internet are accepted unless the person running the server allows private ones.</span>
       </form>
     </details>
   );

@@ -72,6 +72,7 @@ export const api = {
   decideStep: (ws, wf, step, body) => request('POST', `${w(ws)}/workflows/${wf}/steps/${step}/decide`, body),
   connectors: (ws) => request('GET', `${w(ws)}/connectors`),
   addMcp: (ws, body) => request('POST', `${w(ws)}/connectors/mcp`, body),
+  signInMcp: (ws, id) => request('POST', `${w(ws)}/connectors/mcp/${id}/signin`, {}),
   refreshMcp: (ws, id) => request('POST', `${w(ws)}/connectors/mcp/${id}/refresh`, {}),
   setMcpTools: (ws, id, enabled) => request('PUT', `${w(ws)}/connectors/mcp/${id}/tools`, { enabled }),
   deleteMcp: (ws, id) => request('DELETE', `${w(ws)}/connectors/mcp/${id}`),

@@ -216,6 +216,29 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Coming back from an MCP server's sign-in: ?connector=<name>&result=connected, or ?connector=error&reason=...
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const name = q.get('connector');
+    if (!name) return;
+    const reasons = {
+      denied: 'Access was not granted.',
+      expired: 'The sign-in took too long. Try again.',
+      state: 'The sign-in could not be verified. Try again from this browser.',
+      session: 'You were signed out while connecting. Sign in and try again.',
+      forbidden: 'Only workspace admins can connect a source.',
+      exchange: 'The service did not accept the sign-in. Try again.',
+    };
+    const result = q.get('result');
+    const reason = q.get('reason');
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+    openSettings('integrations', { replace: true });
+    api.connectors(wsId).then(setConnectors).catch(() => {});
+    if (result === 'connected') setError('');
+    else setError(reasons[reason] || 'Could not finish signing in.');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Back/forward and edited links switch workflows.
   const openRef = useRef(openWorkflow);
   openRef.current = openWorkflow;
@@ -444,7 +467,17 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     window.location.href = url;
   };
 
-  const addMcp = async (body) => { setConnectors(await api.addMcp(wsId, body)); }; // throws with a readable message when it cannot connect
+  // For OAuth the answer carries the address to sign in at, and this page is left to go there.
+  const addMcp = async (body) => {
+    const next = await api.addMcp(wsId, body); // throws with a readable message when it cannot connect
+    setConnectors(next);
+    if (next.authorizeUrl) window.location.href = next.authorizeUrl;
+  };
+  const signInMcp = async (id) => {
+    const next = await api.signInMcp(wsId, id);
+    setConnectors(next);
+    if (next.authorizeUrl) window.location.href = next.authorizeUrl;
+  };
   const refreshMcp = async (id) => { setConnectors(await api.refreshMcp(wsId, id)); };
   const setMcpTools = async (id, enabled) => { setConnectors(await api.setMcpTools(wsId, id, enabled)); };
   const deleteMcp = async (id) => { setConnectors(await api.deleteMcp(wsId, id)); };
@@ -730,6 +763,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           onRefreshMcp={refreshMcp}
           onMcpTools={setMcpTools}
           onDeleteMcp={deleteMcp}
+          onSignInMcp={signInMcp}
           onConnect={connectTool}
           onDisconnect={disconnectTool}
           team={{

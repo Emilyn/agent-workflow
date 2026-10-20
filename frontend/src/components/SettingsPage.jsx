@@ -13,7 +13,7 @@ export const SECTIONS = [
 ];
 
 // Workspace settings on a page of their own, so the side panel stays for the workflow.
-export default function SettingsPage({ section, onSection, onClose, canManage, claude, ints, workflows, currentWorkflowId, wsId, me, team, onConnectClaude, onDisconnectClaude, onClaudeMode, onClaudeCode, onRefreshClaude, connectors, onAddMcp, onRefreshMcp, onMcpTools, onDeleteMcp, onConnect, onDisconnect }) {
+export default function SettingsPage({ section, onSection, onClose, canManage, claude, ints, workflows, currentWorkflowId, wsId, me, team, onConnectClaude, onDisconnectClaude, onClaudeMode, onClaudeCode, onRefreshClaude, connectors, onAddMcp, onRefreshMcp, onMcpTools, onDeleteMcp, onSignInMcp, onConnect, onDisconnect }) {
   const active = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
   return (
     <div className="settings">
@@ -46,7 +46,7 @@ export default function SettingsPage({ section, onSection, onClose, canManage, c
               ))}
             </div>
             <span className="small muted">Connected tools show up as options when you create an agent or edit a step. Disconnecting removes the stored sign-in.</span>
-            <ConnectorsSection connectors={connectors} canManage={canManage} onAdd={onAddMcp} onRefresh={onRefreshMcp} onTools={onMcpTools} onDelete={onDeleteMcp} />
+            <ConnectorsSection connectors={connectors} canManage={canManage} onAdd={onAddMcp} onRefresh={onRefreshMcp} onTools={onMcpTools} onDelete={onDeleteMcp} onSignIn={onSignInMcp} />
           </>
         )}
         {active.id === 'triggers' && (
