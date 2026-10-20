@@ -216,10 +216,9 @@ func TestClaudeCodeRunsAStep(t *testing.T) {
 	admin := e.signup("Ann", "ann@example.com")
 	admin.setMode(200, "claude_code")
 
-	var wfs []Summary
-	admin.mustCall(200, "GET", admin.path("/workflows"), nil, &wfs)
+	wfID := workflowWithTools(t, admin, []string{}) // a step without tools gets no tool endpoint
 	var res runResponse
-	admin.mustCall(200, "POST", admin.path("/workflows/"+wfs[0].ID+"/run/step"), map[string]string{"stepId": "n2"}, &res)
+	admin.mustCall(200, "POST", admin.path("/workflows/"+wfID+"/run/step"), map[string]string{"stepId": "n2"}, &res)
 	if res.Text != "fake answer" || res.Simulated {
 		t.Fatalf("%+v", res)
 	}

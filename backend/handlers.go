@@ -24,6 +24,8 @@ type Server struct {
 	logins      *limiter // per IP and email
 	loginsIP    *limiter // per IP
 	signups     *limiter
+	webGuard    guard    // where web_fetch may connect: public addresses only
+	mcpGuard    guard    // where MCP connectors may connect
 	hookCalls   *limiter // per workflow, for the incoming webhook address
 	claudeCalls *limiter // per workspace, so one teammate can't burn through the shared key
 	dummyHash   string
@@ -49,6 +51,8 @@ func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
 		signups:     newLimiter(10, time.Hour),
 		claudeCalls: newLimiter(60, time.Minute),
 		hookCalls:   newLimiter(30, time.Minute),
+		webGuard:    guard{},
+		mcpGuard:    guard{allowPrivate: cfg.AllowPrivateConnectors},
 		dummyHash:   dummy,
 		wake:        make(chan struct{}, 1),
 		bridge:      newCodeBridge(),

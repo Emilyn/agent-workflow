@@ -27,6 +27,9 @@ type Config struct {
 	PublicURL    string              // where browsers reach this app; OAuth callbacks are built from it
 	Apps         map[string]OAuthApp // keyed by provider id: github, gitlab, jira, figma
 	ClaudeCode   ClaudeCodeConfig
+	WebSearch    WebSearchConfig
+	// AllowPrivateConnectors lets MCP connectors point at addresses on the server's own network.
+	AllowPrivateConnectors bool
 }
 
 // ClaudeCodeConfig turns on the "run on this machine's Claude Code" mode. It starts the claude
@@ -106,6 +109,16 @@ func LoadConfig() (Config, error) {
 		return c, err
 	}
 	c.ClaudeCode = cc
+	c.AllowPrivateConnectors = envBool("ALLOW_PRIVATE_CONNECTORS", false)
+	ws := WebSearchConfig{Provider: strings.ToLower(os.Getenv("WEB_SEARCH_PROVIDER")), Key: os.Getenv("WEB_SEARCH_API_KEY"), URL: strings.TrimRight(os.Getenv("WEB_SEARCH_URL"), "/")}
+	switch {
+	case ws.Provider == "":
+	case ws.Provider == "brave" && ws.Key != "":
+	case ws.Provider == "searxng" && ws.URL != "":
+	default:
+		return c, errors.New("WEB_SEARCH_PROVIDER must be brave (with WEB_SEARCH_API_KEY) or searxng (with WEB_SEARCH_URL), or empty")
+	}
+	c.WebSearch = ws
 	if c.DatabaseURL == "" {
 		return c, errors.New("DATABASE_URL is required, e.g. postgres://user:pass@localhost:5432/agentworkflow?sslmode=disable")
 	}

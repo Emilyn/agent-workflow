@@ -533,6 +533,13 @@ func (s *Server) toolbox(ctx context.Context, wsID string, stepTools []string, r
 			}
 		}
 	}
+	if hasTool(stepTools, webLabel) {
+		labels = append(labels, webLabel)
+		for _, t := range webTools(s.cfg.WebSearch) {
+			defs = append(defs, t)
+			handlers[t.Name] = func(ctx context.Context, in json.RawMessage) (string, error) { return s.runWeb(ctx, t.Name, in) }
+		}
+	}
 	if len(defs) == 0 {
 		return nil, nil, nil, nil
 	}
