@@ -75,6 +75,16 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 
 `GET /api/health` says the process is up; `GET /api/ready` also checks the database. The server logs JSON, handles SIGTERM by finishing in-flight requests, and the image has a `healthcheck` subcommand.
 
+## Automatic starts: schedules and webhooks
+
+Open a workflow and use its **Automate** tab. A workflow can start by itself from:
+
+- **A schedule** (daily, weekly or monthly, at a time in a time zone you choose). Several schedules per workflow are fine. If the server was down, missed times become one run.
+- **An incoming webhook**: a private address per workflow (admins create, replace or switch it off). Whatever is POSTed to it reaches the first step as text marked as data, never as instructions. Anyone who has the address can start the workflow, so treat it like a password. Set `PUBLIC_URL` so the address shown is one other services can reach.
+- **Run in the background now**, for testing and for starting a run without keeping a browser open.
+
+The server runs the agent steps, pauses at a step for a person (it appears under **Runs** as needing them) and carries on once they approve or send it back, or finish the step in the editor. A start waits in a queue (up to 5 per workflow) until the workflow is free: no run is going or paused on it, and nobody is partway through it by hand. Each workflow shows its recent automatic runs, including skipped and failed ones. Automatic runs need Claude connected (an API key or Claude Code); without it they fail with a clear message.
+
 ## Run agents on your own Claude Code (optional)
 
 By default agents run on an Anthropic API key that an admin adds under **Settings → Claude**. If you run this server yourself, you can instead let a workspace run its agents on the **Claude Code installed on that server**, with the login you already use there. No API key is needed for those workspaces.

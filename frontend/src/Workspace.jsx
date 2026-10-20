@@ -286,7 +286,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           lastMsg.current = r.messages[r.messages.length - 1].id;
           setDoc((d) => ({ ...d, messages: mergeMessages(d.messages, r.messages) }));
         }
-        setDoc((d) => (JSON.stringify(d.outputs) === JSON.stringify(r.outputs) ? d : { ...d, outputs: r.outputs }));
+        setDoc((d) => (JSON.stringify(d.outputs) === JSON.stringify(r.outputs) && JSON.stringify(d.auto) === JSON.stringify(r.auto) ? d : { ...d, outputs: r.outputs, auto: r.auto }));
       } catch (e) {
         if (e.status === 404 && !stopped) {
           // Someone deleted this workflow.
@@ -342,7 +342,10 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const node = findNode(doc.steps, selected) || doc.steps[0][0];
   const { done, waiting } = runSummary(doc);
   const currentRow = done ? [] : doc.steps[doc.progress];
-  const runLabel = busy
+  const autoRunning = doc.auto?.status === 'running'; // the server is driving this run
+  const runLabel = autoRunning
+    ? 'Running on its own…'
+    : busy
     ? 'Running…'
     : done
       ? 'Run again'
@@ -458,7 +461,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
 
   // ---------- running ----------
   const advance = async () => {
-    if (busy) return;
+    if (busy || docRef.current?.auto?.status === 'running') return;
     setError('');
     if (done) {
       try {
@@ -660,7 +663,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           members={members}
           saveState={saveState}
           runLabel={runLabel}
-          busy={busy}
+          busy={busy || autoRunning}
           onHome={goHome}
           onAdvance={advance}
           onShare={() => openSettings('team')}
@@ -748,6 +751,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
               setDraft(`About “${n.title}”: `);
             },
           }}
+          automation={{ wsId, wfId: doc.id, canManage, auto: doc.auto, onChanged: refreshInbox }}
           runs={{ wsId, wfId: doc.id, ints, onGoIntegrations: () => openSettings('integrations'), onManageTriggers: () => openSettings('triggers') }}
           builder={{
             ints,
