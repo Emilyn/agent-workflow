@@ -75,6 +75,15 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 
 `GET /api/health` says the process is up; `GET /api/ready` also checks the database. The server logs JSON, handles SIGTERM by finishing in-flight requests, and the image has a `healthcheck` subcommand.
 
+## Other sources: the web and MCP servers
+
+Agents can read more than GitHub, GitLab, Jira and Figma. Under **Settings → Integrations → Other sources**:
+
+- **Web.** Switch on **Web search** in a step and the agent can read public web pages (`web_fetch`). The server refuses private, loopback and link-local addresses, non-standard ports and addresses with credentials, checked on the address actually connected to, so redirects and DNS tricks do not get around it. To let agents also *search*, set `WEB_SEARCH_PROVIDER=brave` with `WEB_SEARCH_API_KEY`, or `WEB_SEARCH_PROVIDER=searxng` with `WEB_SEARCH_URL`.
+- **MCP servers.** An admin adds a remote MCP server (streamable HTTP; the older SSE-only transport is not supported) with an optional token, stored encrypted. The app reads its tool list and the admin switches on the tools agents may use. Only tools the server marks read-only (`readOnlyHint`) can be switched on. If the server later changes a tool's description or inputs, that tool is switched off until an admin looks at it again. A step uses a connector by listing its name under its tools. Text a server returns is treated as data, never as instructions.
+
+Connections to MCP servers must use https and a public address. If your MCP server runs on your own network, set `ALLOW_PRIVATE_CONNECTORS=true` (this also allows plain http for connectors). Only do that on a server where every workspace admin is trusted, since it lets them make the server connect to internal addresses.
+
 ## Automatic starts: schedules and webhooks
 
 Open a workflow and use its **Automate** tab. A workflow can start by itself from:

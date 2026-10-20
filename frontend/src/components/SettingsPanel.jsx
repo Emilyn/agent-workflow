@@ -1,7 +1,10 @@
 import { KIND_LABEL, LIVE_TOOLS, rowOf, statusFor } from '../workflow.js';
 import { Pill } from './Canvas.jsx';
 
-export default function SettingsPanel({ doc, node, ints, onEdit, onRemove, onDiscuss, onGoIntegrations }) {
+// Sources beyond the OAuth tools: the web, and each MCP server with at least one tool switched on.
+const extraTools = (connectors) => (connectors ? [{ label: 'Web search', note: 'Web' }, ...connectors.mcp.filter((c) => c.enabledCount > 0).map((c) => ({ label: c.name, note: c.name }))] : []);
+
+export default function SettingsPanel({ doc, node, ints, connectors, onEdit, onRemove, onDiscuss, onGoIntegrations }) {
   const row = rowOf(doc.steps, node.id);
   const output = doc.outputs[node.id];
 
@@ -40,9 +43,17 @@ export default function SettingsPanel({ doc, node, ints, onEdit, onRemove, onDis
                   </button>
                 );
               })}
-              {node.tools.filter((t) => !LIVE_TOOLS.some((l) => l.label === t)).map((t) => <span key={t} className="tag-chip">{t}</span>)}
+              {extraTools(connectors).map((t) => {
+                const on = node.tools.includes(t.label);
+                return (
+                  <button key={t.label} type="button" className={`tool${on ? ' on' : ''}`} aria-pressed={on} onClick={() => onEdit(node.id, { tools: on ? node.tools.filter((x) => x !== t.label) : [...node.tools, t.label] })}>
+                    {t.label}
+                  </button>
+                );
+              })}
+              {node.tools.filter((t) => !LIVE_TOOLS.some((l) => l.label === t) && !extraTools(connectors).some((l) => l.label === t)).map((t) => <span key={t} className="tag-chip" title="Recorded only: nothing is connected under this name">{t}</span>)}
             </div>
-            <span className="small muted">Connected tools (GitHub, GitLab, Jira, Figma) are live: this agent can read from them while it runs. Other tools are recorded but not called yet.</span>
+            <span className="small muted">Connected tools, the web and MCP servers are live: this agent can read from them while it runs. Other names are recorded but nothing is connected to them.</span>
           </div>
           <div className="row box" style={{ justifyContent: 'space-between' }}>
             <span>Model</span><strong>{node.who}</strong>

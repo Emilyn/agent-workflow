@@ -54,6 +54,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [claude, setClaude] = useState(null);
+  const [connectors, setConnectors] = useState(null); // the web and MCP servers agents can read
   const [ints, setInts] = useState(null); // connection status of GitHub, GitLab, Jira and Figma
 
   const dirty = useRef(false);
@@ -171,13 +172,14 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     let cancelled = false;
     (async () => {
       try {
-        const [l, st, m, c, connections] = await Promise.all([api.listWorkflows(wsId), api.getSettings(wsId), api.members(wsId), api.claudeStatus(wsId), api.integrations(wsId)]);
+        const [l, st, m, c, connections, conns] = await Promise.all([api.listWorkflows(wsId), api.getSettings(wsId), api.members(wsId), api.claudeStatus(wsId), api.integrations(wsId), api.connectors(wsId)]);
         if (cancelled) return;
         setList(l);
         setSettings(st);
         setMembers(m);
         setClaude(c);
         setInts(connections);
+        setConnectors(conns);
         const id = l.find((x) => x.id === wfFromUrl)?.id || l[0].id; // a workflow is always loaded in the background
         const wf = await api.getWorkflow(wsId, id);
         if (!cancelled) {
@@ -441,6 +443,11 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     const { url } = await api.integrationStart(wsId, id); // the provider asks for consent, then sends the browser back here
     window.location.href = url;
   };
+
+  const addMcp = async (body) => { setConnectors(await api.addMcp(wsId, body)); }; // throws with a readable message when it cannot connect
+  const refreshMcp = async (id) => { setConnectors(await api.refreshMcp(wsId, id)); };
+  const setMcpTools = async (id, enabled) => { setConnectors(await api.setMcpTools(wsId, id, enabled)); };
+  const deleteMcp = async (id) => { setConnectors(await api.deleteMcp(wsId, id)); };
 
   const disconnectTool = async (id) => {
     setInts(await api.integrationDisconnect(wsId, id));
@@ -718,6 +725,11 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           onClaudeMode={changeClaudeMode}
           onClaudeCode={saveClaudeCode}
           onRefreshClaude={refreshClaude}
+          connectors={connectors}
+          onAddMcp={addMcp}
+          onRefreshMcp={refreshMcp}
+          onMcpTools={setMcpTools}
+          onDeleteMcp={deleteMcp}
           onConnect={connectTool}
           onDisconnect={disconnectTool}
           team={{
@@ -743,6 +755,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           chat={{ draft, thinking, onDraft: setDraft, onSend: sendMessage }}
           settings={{
             ints,
+            connectors,
             onGoIntegrations: () => openSettings('integrations'),
             onEdit: (id, patch) => update((d) => patchNode(d, id, patch)),
             onRemove: removeSelected,
