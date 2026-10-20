@@ -6,6 +6,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:8080' },
+    // The API refuses writes whose Origin differs from the Host it receives (CSRF protection), so the proxy
+    // must pass the browser's Host through (changeOrigin: false) instead of rewriting it to :8080.
+    proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: false } },
   },
 });

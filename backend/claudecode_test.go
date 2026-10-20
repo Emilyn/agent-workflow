@@ -452,3 +452,53 @@ func TestMCPEndpoint(t *testing.T) {
 	}
 	_ = io.Discard
 }
+
+// ---------- settings a workspace admin can change ----------
+
+func TestClaudeCodeWorkspaceSettings(t *testing.T) {
+	logFile := fakeClaudeSetup(t, "ok")
+	e := newEnv(t, envOpts{claudeCode: true})
+	admin := e.signup("Ann", "ann@example.com")
+	member := e.signup("Mo", "mo@example.com")
+	e.join(admin, member, "member")
+	admin.setMode(200, "claude_code")
+
+	put := func(want int, body map[string]any) claudeStatus {
+		var st claudeStatus
+		admin.mustCall(want, "PUT", admin.path("/claude/code"), body, &st)
+		return st
+	}
+	member.mustCall(403, "PUT", admin.path("/claude/code"), map[string]any{"maxTurns": 3}, nil)
+	for _, bad := range []map[string]any{
+		{"maxTurns": 0}, {"maxTurns": 101}, {"maxBudgetUsd": 0}, {"maxBudgetUsd": 5000},
+		{"timeoutSeconds": 5}, {"effort": "extreme"}, {"model": "--dangerous"}, {"model": "a b"},
+	} {
+		put(400, bad)
+	}
+
+	st := put(200, map[string]any{"model": " claude-opus-5-5 ", "effort": "HIGH", "maxTurns": 3, "maxBudgetUsd": 0.25, "timeoutSeconds": 90})
+	c := st.Code
+	if c.Model != "claude-opus-5-5" || c.Effort != "high" || c.MaxTurns != 3 || c.MaxBudgetUSD != 0.25 || c.TimeoutSecs != 90 || st.Model != "claude-opus-5-5" {
+		t.Fatalf("%+v", st)
+	}
+	if c.Defaults.Model != "test-model" || c.Defaults.MaxTurns != 7 || c.Custom.MaxTurns == nil || *c.Custom.MaxTurns != 3 {
+		t.Fatalf("%+v", c)
+	}
+
+	var wfs []Summary
+	admin.mustCall(200, "GET", admin.path("/workflows"), nil, &wfs)
+	var res runResponse
+	admin.mustCall(200, "POST", admin.path("/workflows/"+wfs[0].ID+"/run/step"), map[string]string{"stepId": "n2"}, &res)
+	run := readFakeRun(t, logFile)
+	for _, want := range [][2]string{{"--model", "claude-opus-5-5"}, {"--max-turns", "3"}, {"--max-budget-usd", "0.25"}, {"--effort", "high"}} {
+		if !hasArgPair(run.Args, want[0], want[1]) {
+			t.Errorf("missing %v in %v", want, run.Args)
+		}
+	}
+
+	// clearing every field goes back to the server's defaults
+	st = put(200, map[string]any{})
+	if st.Code.Model != "test-model" || st.Code.MaxTurns != 7 || st.Code.Custom.MaxTurns != nil {
+		t.Fatalf("%+v", st.Code)
+	}
+}

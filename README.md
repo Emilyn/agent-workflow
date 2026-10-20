@@ -64,7 +64,7 @@ npm run dev                       # http://localhost:5173, proxies /api to :8080
 | `ANTHROPIC_API_KEY` | unset | Optional key used by workspaces that haven't connected their own. Everyone on the server then shares it. |
 | `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model for agent steps and chat. |
 | `PUBLIC_URL` | `http://localhost:<PORT>` | The address people use in the browser. Providers send them back to `PUBLIC_URL/api/integrations/<provider>/callback`. |
-| `GITHUB_`, `GITLAB_`, `JIRA_`, `FIGMA_` `CLIENT_ID` / `CLIENT_SECRET` | unset | An OAuth app for each service you want to offer. A service without them shows "no OAuth app yet". |
+| `GITHUB_`, `GITLAB_`, `JIRA_`, `FIGMA_` `CLIENT_ID` / `CLIENT_SECRET` | unset | An optional shared OAuth app for each service. Workspaces can instead add their own in Settings → Integrations; a service with neither shows "no OAuth app yet". |
 | `…_SCOPES` | see below | What each OAuth app asks for. |
 | `GITHUB_OAUTH_URL`, `GITHUB_API_URL` | `https://github.com`, `https://api.github.com` | Change for GitHub Enterprise Server. |
 | `GITLAB_URL` | `https://gitlab.com` | Change for a self-managed GitLab. |
@@ -81,14 +81,14 @@ By default agents run on an Anthropic API key that an admin adds under **Setting
 
 1. Install Claude Code on the machine that runs the backend and sign in once: run `claude`, then `/login`.
 2. Start the backend with `CLAUDE_CODE_ENABLED=true` (see the table below).
-3. An admin opens **Settings → Claude** and picks **Claude Code on this machine**. The card shows which account the agent runs as and the limits. If Claude Code is missing or signed out, it says so and the workspace stays on its API key.
+3. An admin opens **Settings → Claude** and picks **Claude Code on this machine**. Under it, the admin can change the model, effort, turns, spending cap and time limit for that workspace; empty boxes use the defaults from the table below. The card shows which account the agent runs as and the limits. If Claude Code is missing or signed out, it says so and the workspace stays on its API key.
 
 How it works: each run starts `claude -p` in an empty temporary folder. Its own tools (files, shell, web) and your personal Claude Code settings are switched off. It is given only this app's tools (GitHub, GitLab, Jira, Figma and, for reviews, the single bound `post_review`), through a small MCP endpoint on this server at an unguessable, per-run address that stops working when the run ends. They run here with the same checks as before. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the environment Claude Code sees, so it uses the login. Background review runs may take up to `CLAUDE_CODE_TIMEOUT_SECONDS`; steps run from the browser stop after about 100 seconds.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `CLAUDE_CODE_ENABLED` | `false` | Offer the mode to workspace admins. |
-| `CLAUDE_CODE_PATH` | `claude` | The Claude Code program (a name on `PATH`, or a full path). |
+| `CLAUDE_CODE_ENABLED` | `false` | Offer the mode to workspace admins. Server-only, for the same reason. |
+| `CLAUDE_CODE_PATH` | `claude` | The Claude Code program (a name on `PATH`, or a full path). Server-only: not settable in the app, so no workspace admin can choose which program the server runs. |
 | `CLAUDE_CODE_MODEL` | `ANTHROPIC_MODEL` | Model for these runs (an alias or a full name). |
 | `CLAUDE_CODE_EFFORT` | Claude Code's default | `low`, `medium`, `high`, `xhigh` or `max`. |
 | `CLAUDE_CODE_MAX_TURNS` | `15` | Model turns in one run. |
@@ -106,7 +106,7 @@ Things to know:
 ## Connecting tools (GitHub, GitLab, Jira, Figma)
 
 1. Create an OAuth app at the service and set its callback URL to `PUBLIC_URL/api/integrations/<provider>/callback` (`github`, `gitlab`, `jira` or `figma`).
-2. Put its client id and secret in the matching `…_CLIENT_ID` and `…_CLIENT_SECRET`, and set `PUBLIC_URL`.
+2. Paste its client ID and secret (and, if you like, the scopes) under **Settings → Integrations** in the app. The secret is stored encrypted and never shown again. Each workspace can use its own OAuth app. Or, to share one app across every workspace on the server, put them in `…_CLIENT_ID` and `…_CLIENT_SECRET` and set `PUBLIC_URL`; a workspace's own app overrides it. Changing the client ID disconnects the current sign-in. The service addresses (`GITLAB_URL`, `GITHUB_API_URL` and so on) stay server-only.
 3. An admin opens **Settings → Integrations** (the Settings button in the top bar), chooses **Connect …** and approves on the service's own page. The sign-in is encrypted like the Claude key (bound to the workspace) and never sent to the browser.
 4. Give a step the tool: select the step, then **Step settings → Tools and sources**. When it runs, Claude can call that service's read-only tools, and the step's output lists which were used.
 

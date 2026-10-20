@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api.js';
 import Canvas from './components/Canvas.jsx';
 import Header from './components/Header.jsx';
+import HomePage from './components/HomePage.jsx';
+import NewWorkflowPage from './components/NewWorkflowPage.jsx';
+import Sidebar from './components/Sidebar.jsx';
 import Palette from './components/Palette.jsx';
 import Side from './components/Side.jsx';
 import SettingsPage from './components/SettingsPage.jsx';
-import { hashFor, parseHash, settingsHash } from './route.js';
+import { hashFor, newHash, parseHash, settingsHash } from './route.js';
 import {
   ROLE_RANK,
   LIVE_TOOLS,
@@ -36,7 +39,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const [list, setList] = useState([]);
   const [selected, setSelected] = useState(null);
   const [tab, setTab] = useState('chat');
-  const [page, setPage] = useState(() => (parseHash().page === 'settings' ? 'settings' : 'editor'));
+  const [page, setPage] = useState(() => parseHash().page || 'home'); // home | new | editor | settings
+  const [copySource, setCopySource] = useState(null); // the workflow offered as "copy of" on the new-workflow page
   const [section, setSection] = useState(() => parseHash().section || 'claude');
   const [form, setForm] = useState(blankForm());
   const [formError, setFormError] = useState('');
@@ -59,6 +63,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
   const lastMsg = useRef(0);
   const saveChain = useRef(Promise.resolve());
   const pageRef = useRef(page);
+  const lastMain = useRef(page === 'editor' ? 'editor' : 'home'); // where leaving settings goes back to
   docRef.current = doc;
   pageRef.current = page;
   settingsRef.current = settings;
@@ -75,14 +80,20 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     const want = settingsHash(wsId, next);
     if (window.location.hash !== want) window.history[replace ? 'replaceState' : 'pushState'](null, '', want);
   }, [wsId]);
+  const setMain = useCallback((p, hash) => {
+    pageRef.current = p;
+    setPage(p);
+    if (p === 'home' || p === 'editor') lastMain.current = p;
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash);
+  }, []);
+  const goHome = useCallback(() => setMain('home', hashFor(wsId)), [setMain, wsId]);
   const closeSettings = useCallback(() => {
-    pageRef.current = 'editor';
-    setPage('editor');
-    if (docRef.current) window.history.pushState(null, '', hashFor(wsId, docRef.current.id));
-  }, [wsId]);
+    if (lastMain.current === 'editor' && docRef.current) setMain('editor', hashFor(wsId, docRef.current.id));
+    else goHome();
+  }, [goHome, setMain, wsId]);
 
   // ---------- loading ----------
-  const show = useCallback((wf, { keepSelection = false, notice = '', replace = false } = {}) => {
+  const show = useCallback((wf, { keepSelection = false, notice = '', replace = false, open = false } = {}) => {
     dirty.current = false;
     version.current = wf.version;
     lastMsg.current = wf.messages.length ? wf.messages[wf.messages.length - 1].id : 0;
@@ -90,12 +101,13 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     setSelected((cur) => (keepSelection && findNode(wf.steps, cur) ? cur : wf.steps[0][0].id));
     if (!keepSelection) setDraft('');
     setError(notice);
-    // opening a workflow leaves the settings page, except for the first load of a settings link
-    if (pageRef.current === 'settings' && !replace) {
+    // Opening a workflow shows the editor. Refreshing the open one never moves you to another page.
+    if (open && pageRef.current !== 'editor') {
       pageRef.current = 'editor';
+      lastMain.current = 'editor';
       setPage('editor');
     }
-    if (pageRef.current !== 'settings') {
+    if (pageRef.current === 'editor') {
       const want = hashFor(wsId, wf.id);
       if (window.location.hash !== want) window.history[replace ? 'replaceState' : 'pushState'](null, '', want);
     }
@@ -149,7 +161,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
 
   const openWorkflow = useCallback(async (id) => {
     await flush();
-    show(await api.getWorkflow(wsId, id));
+    show(await api.getWorkflow(wsId, id), { open: true });
   }, [flush, show, wsId]);
 
   useEffect(() => {
@@ -163,9 +175,11 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
         setMembers(m);
         setClaude(c);
         setInts(connections);
-        const id = l.find((x) => x.id === wfFromUrl)?.id || l[0].id;
+        const id = l.find((x) => x.id === wfFromUrl)?.id || l[0].id; // a workflow is always loaded in the background
         const wf = await api.getWorkflow(wsId, id);
-        if (!cancelled) show(wf, { replace: true });
+        if (!cancelled) {
+          show(wf, { replace: true });
+        }
       } catch (e) {
         if (!cancelled && e.status !== 401) setLoadError(e.message);
       }
@@ -204,17 +218,14 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     const onHash = () => {
       const r = parseHash();
       if (r.kind !== 'ws' || r.ws !== wsId) return;
+      pageRef.current = r.page;
+      setPage(r.page);
       if (r.page === 'settings') {
-        pageRef.current = 'settings';
-        setPage('settings');
         setSection(r.section || 'claude');
         return;
       }
-      if (pageRef.current === 'settings') {
-        pageRef.current = 'editor';
-        setPage('editor');
-      }
-      if (r.wf && docRef.current && r.wf !== docRef.current.id) {
+      if (r.page === 'home' || r.page === 'editor') lastMain.current = r.page;
+      if (r.page === 'editor' && r.wf && docRef.current && r.wf !== docRef.current.id) {
         openRef.current(r.wf).catch((e) => setError(`Could not open that workflow: ${e.message}`));
       }
     };
@@ -278,13 +289,16 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           // Someone deleted this workflow.
           const l = await api.listWorkflows(wsId).catch(() => []);
           setList(l);
-          if (l.length) show(await api.getWorkflow(wsId, l[0].id), { notice: 'That workflow was deleted by a teammate.' });
+          if (l.length) {
+            show(await api.getWorkflow(wsId, l[0].id), { notice: 'That workflow was deleted by a teammate.' });
+            if (pageRef.current === 'editor') setMain('home', hashFor(wsId));
+          }
         }
       }
     };
     const t = setInterval(tick, POLL_MS);
     return () => { stopped = true; clearInterval(t); };
-  }, [wsId, docId, show]);
+  }, [wsId, docId, show, setMain]);
 
   // Teammates joining or leaving: refresh now and then, and whenever a screen that lists them opens.
   useEffect(() => {
@@ -406,12 +420,22 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     window.location.href = url;
   };
 
+  const saveToolApp = async (id, app) => {
+    setInts(await api.setIntegrationApp(wsId, id, app)); // throws with a readable message when it is refused
+  };
+  const removeToolApp = async (id) => {
+    setInts(await api.deleteIntegrationApp(wsId, id));
+  };
+
   const disconnectTool = async (id) => {
     setInts(await api.integrationDisconnect(wsId, id));
   };
 
   const changeClaudeMode = async (mode) => {
     setClaude(await api.setClaudeMode(wsId, mode)); // throws with a readable message when it cannot be used
+  };
+  const saveClaudeCode = async (settings) => {
+    setClaude(await api.setClaudeCodeSettings(wsId, settings));
   };
   const refreshClaude = async () => {
     setClaude(await api.claudeStatus(wsId));
@@ -499,26 +523,28 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     }
   };
 
-  // ---------- header menus ----------
-  const switcher = {
-    list,
-    disabled: busy || !!thinking,
-    onOpenMenu: async () => {
-      try {
-        await flush();
-        setList(await api.listWorkflows(wsId));
-      } catch (e) {
-        setError(e.message);
-      }
-    },
-    onOpen: openWorkflow,
-    onCreate: async (body) => {
+  // ---------- workflow actions ----------
+  const goNew = async () => {
+    try {
       await flush();
-      const wf = await api.createWorkflow(wsId, body);
-      setList(await api.listWorkflows(wsId));
-      show(wf);
-      setTab('chat');
-    },
+    } catch (e) {
+      setError(e.message);
+    }
+    setCopySource(page === 'editor' ? { id: doc.id, name: doc.name } : null);
+    setMain('new', newHash(wsId));
+  };
+  const openFromList = (id) => openWorkflow(id).catch((e) => setError(`Could not open that workflow: ${e.message}`));
+  const createWorkflow = async ({ name, template }) => {
+    await flush();
+    const body = template === 'copy' ? { name, template: '', copyOf: copySource.id } : { name, template };
+    const wf = await api.createWorkflow(wsId, body);
+    setList(await api.listWorkflows(wsId));
+    show(wf, { open: true });
+    setTab('chat');
+  };
+  const workflowMenu = {
+    canDelete: list.length > 1,
+    disabled: busy || !!thinking,
     onRename: async (name) => {
       await persistDoc();
       const { messages, outputs, ...rest } = docRef.current;
@@ -531,13 +557,14 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
       await flush();
       const wf = await api.createWorkflow(wsId, { copyOf: doc.id });
       setList(await api.listWorkflows(wsId));
-      show(wf);
+      show(wf, { open: true });
     },
     onDelete: async () => {
       dirty.current = false;
       const rest = await api.deleteWorkflow(wsId, doc.id);
       setList(rest);
       show(await api.getWorkflow(wsId, rest[0].id));
+      goHome();
     },
   };
 
@@ -553,31 +580,69 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     onSignOut: async () => { await flush().catch(() => {}); await onSignOut(); },
   };
 
+  const goFromSidebar = async (id) => {
+    try {
+      await flush();
+    } catch (e) {
+      setError(e.message);
+    }
+    if (id === 'workflows') goHome();
+    else openSettings(id === 'settings' ? 'claude' : id);
+  };
+
   return (
-    <div className="shell">
-      <Header
-        current={{ id: doc.id, name: doc.name }}
-        switcher={switcher}
+    <div className="app">
+      <Sidebar
         workspaceMenu={workspaceMenu}
-        members={members}
-        saveState={saveState}
-        runLabel={runLabel}
-        busy={busy}
-        onAdvance={advance}
-        onShare={() => openSettings('team')}
-        onSettings={() => openSettings(section)}
+        page={page}
+        section={section}
+        workflows={list}
+        currentId={doc.id}
+        onGo={goFromSidebar}
+        onOpenWorkflow={openFromList}
       />
+      <div className="shell">
+      {page === 'editor' && (
+        <Header
+          current={{ id: doc.id, name: doc.name }}
+          workflowMenu={workflowMenu}
+          members={members}
+          saveState={saveState}
+          runLabel={runLabel}
+          busy={busy}
+          onHome={goHome}
+          onAdvance={advance}
+          onShare={() => openSettings('team')}
+        />
+      )}
       {error && (
         <div className="banner" role="alert">
           <span>{error}</span>
           <button type="button" className="link-btn" onClick={() => setError('')}>Dismiss</button>
         </div>
       )}
-      {claude && !claude.connected && page !== 'settings' && (
+      {claude && !claude.connected && page === 'editor' && (
         <div className="banner info">
           <span>Claude is not connected, so agent steps and replies are simulated.</span>
           <button type="button" className="link-btn" onClick={() => openSettings('claude')}>{canManage ? 'Connect Claude' : 'Learn more'}</button>
         </div>
+      )}
+      {page === 'home' && (
+        <HomePage
+          ws={ws}
+          list={list}
+          claude={claude}
+          ints={ints}
+          members={members}
+          canManage={canManage}
+          onNew={goNew}
+          onOpen={openFromList}
+          onGo={(sec) => openSettings(sec)}
+          onInvite={() => openSettings('team')}
+        />
+      )}
+      {page === 'new' && (
+        <NewWorkflowPage currentName={copySource?.name || ''} onCreate={createWorkflow} onCancel={goHome} />
       )}
       {page === 'settings' ? (
         <SettingsPage
@@ -594,6 +659,9 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           onConnectClaude={connectClaude}
           onDisconnectClaude={disconnectClaude}
           onClaudeMode={changeClaudeMode}
+          onClaudeCode={saveClaudeCode}
+          onSaveApp={saveToolApp}
+          onRemoveApp={removeToolApp}
           onRefreshClaude={refreshClaude}
           onConnect={connectTool}
           onDisconnect={disconnectTool}
@@ -608,7 +676,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
             onDeleted: onLeft,
           }}
         />
-      ) : (
+      ) : page === 'editor' ? (
       <div className="body">
         <Palette doc={view} onAddAgent={addAgent} onAddPerson={addPerson} onCreateAgent={openBuilder} />
         <Canvas doc={view} selected={node.id} busy={busy} onSelect={select} onCreateAgent={openBuilder} />
@@ -647,7 +715,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
           }}
         />
       </div>
-      )}
+      ) : null}
+      </div>
     </div>
   );
 }

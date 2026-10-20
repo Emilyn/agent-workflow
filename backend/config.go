@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -143,31 +144,44 @@ func loadClaudeCode(serverModel string) (ClaudeCodeConfig, error) {
 		Timeout:      5 * time.Minute,
 		CallbackURL:  strings.TrimRight(os.Getenv("CLAUDE_CODE_CALLBACK_URL"), "/"),
 	}
-	switch cc.Effort {
-	case "", "low", "medium", "high", "xhigh", "max":
-	default:
+	if !validEffort(cc.Effort) {
 		return cc, errors.New("CLAUDE_CODE_EFFORT must be low, medium, high, xhigh or max")
 	}
 	if v := os.Getenv("CLAUDE_CODE_MAX_TURNS"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > 100 {
+		if err != nil || !validMaxTurns(n) {
 			return cc, errors.New("CLAUDE_CODE_MAX_TURNS must be a number from 1 to 100")
 		}
 		cc.MaxTurns = n
 	}
 	if v := os.Getenv("CLAUDE_CODE_MAX_BUDGET_USD"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f <= 0 || f > 1000 {
+		if err != nil || !validBudget(f) {
 			return cc, errors.New("CLAUDE_CODE_MAX_BUDGET_USD must be a positive number of dollars")
 		}
 		cc.MaxBudgetUSD = f
 	}
 	if v := os.Getenv("CLAUDE_CODE_TIMEOUT_SECONDS"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 30 || n > 3600 {
+		if err != nil || !validTimeout(n) {
 			return cc, errors.New("CLAUDE_CODE_TIMEOUT_SECONDS must be from 30 to 3600")
 		}
 		cc.Timeout = time.Duration(n) * time.Second
 	}
 	return cc, nil
+}
+
+// The limits below apply to the server's config and to what a workspace admin sets in Settings.
+var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}$`)
+
+func validModel(m string) bool   { return modelName.MatchString(m) }
+func validMaxTurns(n int) bool   { return n >= 1 && n <= 100 }
+func validBudget(f float64) bool { return f > 0 && f <= 1000 }
+func validTimeout(n int) bool    { return n >= 30 && n <= 3600 }
+func validEffort(e string) bool {
+	switch e {
+	case "", "low", "medium", "high", "xhigh", "max":
+		return true
+	}
+	return false
 }

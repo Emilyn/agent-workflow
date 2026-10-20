@@ -3,7 +3,7 @@ import { Spark } from './Icons.jsx';
 
 // How agents run: with an Anthropic API key (the default), or, when the person running the server
 // turned it on, with the Claude Code installed on that server.
-export default function ClaudeCard({ claude, canManage, onConnect, onDisconnect, onMode, onRefresh }) {
+export default function ClaudeCard({ claude, canManage, onConnect, onDisconnect, onMode, onCodeSettings, onRefresh }) {
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
@@ -107,8 +107,9 @@ export default function ClaudeCard({ claude, canManage, onConnect, onDisconnect,
           )}
           <span className="small muted">
             Each run starts the Claude Code installed on the server and signed in there, with only this app&rsquo;s tools (its own file, shell and web tools are off).
-            Limits per run: {code.maxTurns} turns, ${code.maxBudgetUsd} spend{code.effort ? `, effort ${code.effort}` : ''}. The server&rsquo;s config sets these.
+            Limits per run: {code.maxTurns} turns, ${code.maxBudgetUsd} spend, {code.timeoutSeconds} seconds{code.effort ? `, effort ${code.effort}` : ''}.
           </span>
+          {canManage && <CodeSettings code={code} onSave={onCodeSettings} />}
           {error && <span className="alert" role="alert">{error}</span>}
           {canManage && <button className="btn outline" type="button" onClick={recheck} disabled={working}>{working ? 'Checking…' : 'Check sign-in again'}</button>}
         </div>
@@ -160,5 +161,73 @@ export default function ClaudeCard({ claude, canManage, onConnect, onDisconnect,
         )}
       </div>
     </div>
+  );
+}
+
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+// A workspace's own Claude Code settings. An empty box uses the server's default, shown as the hint.
+function CodeSettings({ code, onSave }) {
+  const custom = code.custom || {};
+  const defaults = code.defaults || {};
+  const initial = () => ({
+    model: custom.model ?? '',
+    effort: custom.effort ?? '',
+    maxTurns: custom.maxTurns ?? '',
+    maxBudgetUsd: custom.maxBudgetUsd ?? '',
+    timeoutSeconds: custom.timeoutSeconds ?? '',
+  });
+  const [form, setForm] = useState(initial);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [working, setWorking] = useState(false);
+  const set = (k) => (e) => { setForm({ ...form, [k]: e.target.value }); setSaved(false); setError(''); };
+
+  const save = async (e) => {
+    e.preventDefault();
+    const num = (v) => (String(v).trim() === '' ? null : Number(v));
+    setWorking(true);
+    setError('');
+    try {
+      await onSave({
+        model: form.model.trim() || null,
+        effort: form.effort || null,
+        maxTurns: num(form.maxTurns),
+        maxBudgetUsd: num(form.maxBudgetUsd),
+        timeoutSeconds: num(form.timeoutSeconds),
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWorking(false);
+    }
+  };
+  const reset = () => { setForm({ model: '', effort: '', maxTurns: '', maxBudgetUsd: '', timeoutSeconds: '' }); setSaved(false); };
+
+  return (
+    <form className="col g8" onSubmit={save} data-testid="claude-code-settings">
+      <strong className="small">Settings for this workspace</strong>
+      <label className="lbl" htmlFor="cc-model">Model</label>
+      <input id="cc-model" className="field" value={form.model} onChange={set('model')} placeholder={defaults.model || 'server default'} spellCheck={false} autoComplete="off" />
+      <label className="lbl" htmlFor="cc-effort">Effort</label>
+      <select id="cc-effort" className="field" value={form.effort} onChange={set('effort')}>
+        <option value="">{`Default${defaults.effort ? ` (${defaults.effort})` : ''}`}</option>
+        {EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}
+      </select>
+      <label className="lbl" htmlFor="cc-turns">Turns per run</label>
+      <input id="cc-turns" className="field" type="number" min="1" max="100" step="1" value={form.maxTurns} onChange={set('maxTurns')} placeholder={String(defaults.maxTurns ?? '')} />
+      <label className="lbl" htmlFor="cc-budget">Spending cap per run (USD)</label>
+      <input id="cc-budget" className="field" type="number" min="0.01" max="1000" step="any" value={form.maxBudgetUsd} onChange={set('maxBudgetUsd')} placeholder={String(defaults.maxBudgetUsd ?? '')} />
+      <label className="lbl" htmlFor="cc-timeout">Time limit for background runs (seconds)</label>
+      <input id="cc-timeout" className="field" type="number" min="30" max="3600" step="1" value={form.timeoutSeconds} onChange={set('timeoutSeconds')} placeholder={String(defaults.timeoutSeconds ?? '')} />
+      <span className="small muted">Leave a box empty to use the server&rsquo;s default (shown in grey). Where Claude Code is installed is set by whoever runs the server.</span>
+      {error && <span className="alert" role="alert">{error}</span>}
+      {saved && <span className="ok">Saved.</span>}
+      <div className="row g8">
+        <button className="btn primary" type="submit" disabled={working}>{working ? 'Saving…' : 'Save settings'}</button>
+        <button className="btn outline" type="button" onClick={reset} disabled={working}>Use defaults</button>
+      </div>
+    </form>
   );
 }

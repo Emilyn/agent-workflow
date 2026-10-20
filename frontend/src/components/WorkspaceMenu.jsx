@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ROLE_LABEL } from '../workflow.js';
 
 // The workspace name in the header: switch workspace, create one, open the team tab, sign out.
+const initials = (name) => (name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+
 export default function WorkspaceMenu({ current, workspaces, user, disabled, onSwitch, onCreate, onTeam, onSettings, onSignOut }) {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -30,12 +32,16 @@ export default function WorkspaceMenu({ current, workspaces, user, disabled, onS
 
   return (
     <div className="switcher" ref={box}>
-      <button ref={btn} type="button" className="ws-btn" aria-haspopup="true" aria-expanded={open} disabled={disabled} onClick={() => (open ? close() : setOpen(true))}>
-        <span className="ws-name">{current.name}</span>
+      <button ref={btn} type="button" className="ws-card" aria-haspopup="true" aria-expanded={open} disabled={disabled} onClick={() => (open ? close() : setOpen(true))}>
+        <span className="ws-mark" aria-hidden="true">{initials(current.name)}</span>
+        <span className="col" style={{ flex: 1, minWidth: 0 }}>
+          <span className="ws-card-name">{current.name}</span>
+          <span className="small muted">{ROLE_LABEL[current.role]} · {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}</span>
+        </span>
         <span aria-hidden="true" className="caret">▾</span>
       </button>
       {open && (
-        <div className="menu" role="group" aria-label="Workspaces">
+        <div className="menu menu-left" role="group" aria-label="Workspaces">
           <div className="eyebrow menu-head">Workspaces</div>
           <ul className="wf-list">
             {workspaces.map((w) => (

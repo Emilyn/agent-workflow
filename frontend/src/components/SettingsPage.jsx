@@ -12,7 +12,7 @@ export const SECTIONS = [
 ];
 
 // Workspace settings on a page of their own, so the side panel stays for the workflow.
-export default function SettingsPage({ section, onSection, onClose, canManage, claude, ints, workflows, currentWorkflowId, wsId, me, team, onConnectClaude, onDisconnectClaude, onClaudeMode, onRefreshClaude, onConnect, onDisconnect }) {
+export default function SettingsPage({ section, onSection, onClose, canManage, claude, ints, workflows, currentWorkflowId, wsId, me, team, onConnectClaude, onDisconnectClaude, onClaudeMode, onClaudeCode, onSaveApp, onRemoveApp, onRefreshClaude, onConnect, onDisconnect }) {
   const active = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
   return (
     <div className="settings">
@@ -33,15 +33,15 @@ export default function SettingsPage({ section, onSection, onClose, canManage, c
         {active.id === 'claude' && (
           <>
             <span className="settings-lead">Claude runs the agents. They use one API key shared by the whole workspace (billed to its Anthropic account), or the Claude Code installed on the server if the person running it turned that on.</span>
-            <ClaudeCard claude={claude} canManage={canManage} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} onMode={onClaudeMode} onRefresh={onRefreshClaude} />
+            <ClaudeCard claude={claude} canManage={canManage} onConnect={onConnectClaude} onDisconnect={onDisconnectClaude} onMode={onClaudeMode} onCodeSettings={onClaudeCode} onRefresh={onRefreshClaude} />
           </>
         )}
         {active.id === 'integrations' && (
           <>
-            <span className="settings-lead">An admin connects each service once; agents with that tool can read from it while they run, and the whole workspace shares the access. The only thing agents write is a code review on GitHub or GitLab, which a person approves first.</span>
+            <span className="settings-lead">An admin adds the service's OAuth app and connects it once; agents with that tool can read from it while they run, and the whole workspace shares the access. The only thing agents write is a code review on GitHub or GitLab, which a person approves first.</span>
             <div className="settings-grid">
               {LIVE_TOOLS.map((t) => (
-                <IntegrationCard key={t.id} tool={t} status={ints?.[t.id]} canManage={canManage} onConnect={onConnect} onDisconnect={onDisconnect} />
+                <IntegrationCard key={t.id} tool={t} status={ints?.[t.id]} canManage={canManage} onConnect={onConnect} onDisconnect={onDisconnect} onSaveApp={onSaveApp} onRemoveApp={onRemoveApp} />
               ))}
             </div>
             <span className="small muted">Connected tools show up as options when you create an agent or edit a step. Disconnecting removes the stored sign-in.</span>

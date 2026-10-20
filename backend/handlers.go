@@ -80,9 +80,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/workspaces/{ws}/claude/key", s.inWorkspace("admin", s.putClaudeKey))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/claude/key", s.inWorkspace("admin", s.deleteClaudeKey))
 	mux.HandleFunc("PUT /api/workspaces/{ws}/claude/mode", s.inWorkspace("admin", s.putClaudeMode))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/claude/code", s.inWorkspace("admin", s.putClaudeCodeSettings))
 	mux.HandleFunc("/internal/mcp/{token}", s.mcp)
 
 	mux.HandleFunc("GET /api/workspaces/{ws}/integrations", s.inWorkspace("member", s.integrations))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/integrations/{provider}/app", s.inWorkspace("admin", s.putIntegrationApp))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/integrations/{provider}/app", s.inWorkspace("admin", s.deleteIntegrationApp))
 	mux.HandleFunc("POST /api/workspaces/{ws}/integrations/{provider}/start", s.inWorkspace("admin", s.integrationStart))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/integrations/{provider}", s.inWorkspace("admin", s.integrationDisconnect))
 	mux.HandleFunc("GET /api/integrations/{provider}/callback", s.integrationCallback)

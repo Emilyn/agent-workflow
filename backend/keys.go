@@ -19,12 +19,23 @@ type claudeStatus struct {
 
 // codeStatus describes the "use the Claude Code on this machine" option.
 type codeStatus struct {
-	Enabled      bool         `json:"enabled"` // the operator turned it on (CLAUDE_CODE_ENABLED)
-	Account      *codeAccount `json:"account,omitempty"`
-	Model        string       `json:"model,omitempty"`
-	Effort       string       `json:"effort,omitempty"`
-	MaxTurns     int          `json:"maxTurns,omitempty"`
-	MaxBudgetUSD float64      `json:"maxBudgetUsd,omitempty"`
+	Enabled      bool          `json:"enabled"` // the operator turned it on (CLAUDE_CODE_ENABLED)
+	Account      *codeAccount  `json:"account,omitempty"`
+	Model        string        `json:"model,omitempty"` // what this workspace runs with: its own setting, else the server's
+	Effort       string        `json:"effort,omitempty"`
+	MaxTurns     int           `json:"maxTurns,omitempty"`
+	MaxBudgetUSD float64       `json:"maxBudgetUsd,omitempty"`
+	TimeoutSecs  int           `json:"timeoutSeconds,omitempty"`
+	Custom       CodeOverrides `json:"custom"`   // the workspace's own settings; null fields use Defaults
+	Defaults     codeDefaults  `json:"defaults"` // the server's settings
+}
+
+type codeDefaults struct {
+	Model          string  `json:"model"`
+	Effort         string  `json:"effort"`
+	MaxTurns       int     `json:"maxTurns"`
+	MaxBudgetUSD   float64 `json:"maxBudgetUsd"`
+	TimeoutSeconds int     `json:"timeoutSeconds"`
 }
 
 // keyFor returns the API key a workspace's runs should use: its own encrypted
@@ -75,7 +86,14 @@ func (s *Server) statusFor(ctx context.Context, wsID string) (claudeStatus, erro
 	if cc.Enabled {
 		acct := s.codeAccount(ctx, false)
 		st.Code.Account = &acct
-		st.Code.Model, st.Code.Effort, st.Code.MaxTurns, st.Code.MaxBudgetUSD = cc.Model, cc.Effort, cc.MaxTurns, cc.MaxBudgetUSD
+		eff, custom, err := s.codeSettings(ctx, wsID)
+		if err != nil {
+			return st, err
+		}
+		st.Code.Model, st.Code.Effort, st.Code.MaxTurns, st.Code.MaxBudgetUSD, st.Code.TimeoutSecs = eff.Model, eff.Effort, eff.MaxTurns, eff.MaxBudgetUSD, int(eff.Timeout.Seconds())
+		st.Code.Custom = custom
+		st.Code.Defaults = codeDefaults{cc.Model, cc.Effort, cc.MaxTurns, cc.MaxBudgetUSD, int(cc.Timeout.Seconds())}
+		cc = eff
 	}
 	if mode == modeClaudeCode {
 		st.Mode, st.Model = modeClaudeCode, cc.Model
@@ -175,6 +193,58 @@ func (s *Server) putClaudeMode(w http.ResponseWriter, r *http.Request, c wsCtx) 
 		return
 	}
 	if err := s.repo.SetAgentMode(r.Context(), c.WS, c.User.ID, req.Mode); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.getClaude(w, r, c)
+}
+
+// putClaudeCodeSettings saves a workspace's own Claude Code settings. A missing or null field goes back
+// to the server's default. Where the program lives (CLAUDE_CODE_PATH) and whether the mode exists at all
+// (CLAUDE_CODE_ENABLED) stay with whoever runs the server: a workspace admin must not be able to choose
+// which program the server executes.
+func (s *Server) putClaudeCodeSettings(w http.ResponseWriter, r *http.Request, c wsCtx) {
+	var o CodeOverrides
+	if !decode(w, r, &o) {
+		return
+	}
+	if !s.cfg.ClaudeCode.Enabled {
+		writeError(w, http.StatusBadRequest, "Claude Code is not turned on for this server. The person running it sets CLAUDE_CODE_ENABLED=true.")
+		return
+	}
+	if o.Model != nil {
+		m := strings.TrimSpace(*o.Model)
+		o.Model = &m
+		if m == "" {
+			o.Model = nil
+		} else if !validModel(m) {
+			writeError(w, http.StatusBadRequest, "That model name does not look right. Use a name like claude-sonnet-5-5 or an alias like sonnet.")
+			return
+		}
+	}
+	if o.Effort != nil {
+		e := strings.ToLower(strings.TrimSpace(*o.Effort))
+		o.Effort = &e
+		if e == "" {
+			o.Effort = nil
+		} else if !validEffort(e) {
+			writeError(w, http.StatusBadRequest, "Effort must be low, medium, high, xhigh or max.")
+			return
+		}
+	}
+	if o.MaxTurns != nil && !validMaxTurns(*o.MaxTurns) {
+		writeError(w, http.StatusBadRequest, "Turns per run must be a number from 1 to 100.")
+		return
+	}
+	if o.MaxBudgetUSD != nil && !validBudget(*o.MaxBudgetUSD) {
+		writeError(w, http.StatusBadRequest, "Spending cap must be more than 0 and at most 1000 dollars.")
+		return
+	}
+	if o.TimeoutSeconds != nil && !validTimeout(*o.TimeoutSeconds) {
+		writeError(w, http.StatusBadRequest, "Time limit must be from 30 to 3600 seconds.")
+		return
+	}
+	if err := s.repo.SetCodeOverrides(r.Context(), c.WS, c.User.ID, o); err != nil {
 		s.fail(w, r, err)
 		return
 	}

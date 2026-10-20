@@ -110,6 +110,31 @@ func codeEnv() []string {
 	return env
 }
 
+// codeSettings is the server's Claude Code config with a workspace's own settings laid over it.
+func (s *Server) codeSettings(ctx context.Context, wsID string) (ClaudeCodeConfig, CodeOverrides, error) {
+	cc := s.cfg.ClaudeCode
+	o, err := s.repo.CodeOverrides(ctx, wsID)
+	if err != nil {
+		return cc, o, err
+	}
+	if o.Model != nil {
+		cc.Model = *o.Model
+	}
+	if o.Effort != nil {
+		cc.Effort = *o.Effort
+	}
+	if o.MaxTurns != nil {
+		cc.MaxTurns = *o.MaxTurns
+	}
+	if o.MaxBudgetUSD != nil {
+		cc.MaxBudgetUSD = *o.MaxBudgetUSD
+	}
+	if o.TimeoutSeconds != nil {
+		cc.Timeout = time.Duration(*o.TimeoutSeconds) * time.Second
+	}
+	return cc, o, nil
+}
+
 // ---------- running a prompt ----------
 
 type codeResult struct {
@@ -123,7 +148,10 @@ type codeResult struct {
 
 // generateCode runs one prompt in Claude Code, with our tools when there are any.
 func (s *Server) generateCode(ctx context.Context, wsID, system, user string, tools []ToolDef, run ToolRunner) (string, error) {
-	cc := s.cfg.ClaudeCode
+	cc, _, err := s.codeSettings(ctx, wsID)
+	if err != nil {
+		return "", err
+	}
 	if acct := s.codeAccount(ctx, false); !acct.OK {
 		return "", errors.New(acct.Error)
 	}

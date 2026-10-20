@@ -97,7 +97,7 @@ func (s *Server) deliverReview(ctx context.Context, wsID string, p *provider, a 
 	if err != nil {
 		return "", s.tokenError(p, err)
 	}
-	return p.postReview(ctx, s.cfg.Apps[p.ID], ts, changeEvent{Provider: a.Provider, Project: a.Project, Number: a.Number}, a.Summary, a.Comments)
+	return p.postReview(ctx, s.appFor(ctx, wsID, p), ts, changeEvent{Provider: a.Provider, Project: a.Project, Number: a.Number}, a.Summary, a.Comments)
 }
 
 // ---------- worker ----------
