@@ -630,6 +630,12 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     refreshInbox().catch(() => {});
   };
 
+  const decideStep = async (wf, body) => {
+    await api.decideStep(wsId, wf.id, wf.waitingStep, body); // throws with a readable message when it is refused
+    if (docRef.current?.id === wf.id) show(await api.getWorkflow(wsId, wf.id), { keepSelection: true });
+    await refreshInbox();
+  };
+
   const goFromSidebar = async (id) => {
     try {
       await flush();
@@ -694,7 +700,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
         />
       )}
       {page === 'runs' && (
-        <RunsPage list={list} runs={wsRuns} userName={user.name} busyAction={busyAction} onApprove={approveAction} onDiscard={discardAction} onRerun={rerunRun} onOpenWorkflow={openFromList} />
+        <RunsPage wsId={wsId} list={list} runs={wsRuns} userName={user.name} canManage={canManage} busyAction={busyAction} onApprove={approveAction} onDiscard={discardAction} onRerun={rerunRun} onDecide={decideStep} onOpenWorkflow={openFromList} />
       )}
       {page === 'new' && (
         <NewWorkflowPage currentName={copySource?.name || ''} canDraft={!!claude?.connected} onDraft={(text) => api.draftWorkflow(wsId, text)} onCreate={createWorkflow} onCancel={goHome} />

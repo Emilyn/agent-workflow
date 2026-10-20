@@ -114,6 +114,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}/sync", s.inWorkspace("member", s.sync))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/messages", s.inWorkspace("member", s.postMessage))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/run/step", s.inWorkspace("member", s.runStep))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/steps/{step}/decide", s.inWorkspace("member", s.decideStep))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/run/reset", s.inWorkspace("member", s.runReset))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/chat", s.inWorkspace("member", s.chat))
 

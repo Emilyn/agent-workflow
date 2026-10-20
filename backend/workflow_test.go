@@ -446,3 +446,65 @@ func TestWorkspaceRunsListsEveryWorkflow(t *testing.T) {
 		t.Fatalf("%+v", onlyFirst)
 	}
 }
+
+func TestDecidingAPausedStep(t *testing.T) {
+	e := newEnv(t)
+	admin := e.signup("Ann", "ann@example.com")
+	mo := e.signup("Mo", "mo@example.com")
+	zed := e.signup("Zed", "zed@example.com")
+	e.join(admin, mo, "member")
+	e.join(admin, zed, "member")
+
+	setup := func(progress int) string {
+		var wf Workflow
+		admin.mustCall(200, "GET", admin.path("/workflows/"+admin.firstWorkflow().ID), nil, &wf)
+		wf.Steps = [][]Node{
+			{{ID: "t", Kind: "trigger", Title: "Start"}},
+			{{ID: "a", Kind: "agent", Title: "Writer", Instruction: "Write it."}},
+			{{ID: "h", Kind: "human", Title: "Approve", Assignee: "Mo"}},
+			{{ID: "z", Kind: "agent", Title: "Send", Instruction: "Send it."}},
+		}
+		wf.Progress = progress
+		admin.mustCall(200, "PUT", admin.path("/workflows/"+wf.ID), wf, &wf)
+		return wf.ID
+	}
+	decide := func(who *person, id, step string, body map[string]string, want int) Summary {
+		var s Summary
+		who.mustCall(want, "POST", admin.path("/workflows/"+id+"/steps/"+step+"/decide"), body, &s)
+		return s
+	}
+
+	id := setup(2)
+	decide(zed, id, "h", map[string]string{"decision": "approve"}, 403)  // not the assignee, not an admin
+	decide(mo, id, "a", map[string]string{"decision": "approve"}, 409)   // not the paused step
+	decide(mo, id, "h", map[string]string{"decision": "maybe"}, 400)     // unknown decision
+	decide(mo, id, "h", map[string]string{"decision": "send_back"}, 400) // a note is needed
+	if s := decide(mo, id, "h", map[string]string{"decision": "approve", "note": "Looks good"}, 200); s.Progress != 3 {
+		t.Fatalf("approve: %+v", s)
+	}
+	decide(mo, id, "h", map[string]string{"decision": "approve"}, 409) // already decided
+
+	// an admin can decide for someone else; sending back re-runs the agent before it, with the note
+	id = setup(2)
+	s := decide(admin, id, "h", map[string]string{"decision": "send_back", "note": "Shorter please"}, 200)
+	if s.Progress != 1 {
+		t.Fatalf("send back: %+v", s)
+	}
+	var wf Workflow
+	admin.mustCall(200, "GET", admin.path("/workflows/"+id), nil, &wf)
+	if !strings.Contains(wf.Steps[1][0].Instruction, "Shorter please") || !strings.Contains(wf.Steps[1][0].Instruction, "Write it.") {
+		t.Errorf("instruction: %q", wf.Steps[1][0].Instruction)
+	}
+	last := wf.Messages[len(wf.Messages)-1]
+	if !strings.Contains(last.Text, "Shorter please") || last.Kind != "agent" {
+		t.Errorf("chat: %+v", last)
+	}
+
+	// nothing before the person to send it back to
+	var flat Workflow
+	admin.mustCall(200, "GET", admin.path("/workflows/"+id), nil, &flat)
+	flat.Steps = [][]Node{{{ID: "t", Kind: "trigger", Title: "Start"}}, {{ID: "h", Kind: "human", Title: "Approve", Assignee: "Mo"}}}
+	flat.Progress = 1
+	admin.mustCall(200, "PUT", admin.path("/workflows/"+id), flat, nil)
+	decide(mo, id, "h", map[string]string{"decision": "send_back", "note": "no"}, 400)
+}
