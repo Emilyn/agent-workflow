@@ -540,6 +540,9 @@ func (s *Server) toolbox(ctx context.Context, wsID string, stepTools []string, r
 			handlers[t.Name] = func(ctx context.Context, in json.RawMessage) (string, error) { return s.runWeb(ctx, t.Name, in) }
 		}
 	}
+	if err := s.mcpTools(ctx, wsID, stepTools, &defs, handlers, &labels); err != nil {
+		return nil, nil, nil, err
+	}
 	if len(defs) == 0 {
 		return nil, nil, nil, nil
 	}

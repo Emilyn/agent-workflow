@@ -52,7 +52,7 @@ func NewServer(cfg Config, repo *Repo, log *slog.Logger) (*Server, error) {
 		claudeCalls: newLimiter(60, time.Minute),
 		hookCalls:   newLimiter(30, time.Minute),
 		webGuard:    guard{},
-		mcpGuard:    guard{allowPrivate: cfg.AllowPrivateConnectors},
+		mcpGuard:    guard{allowPrivate: cfg.AllowPrivateConnectors, anyPort: true},
 		dummyHash:   dummy,
 		wake:        make(chan struct{}, 1),
 		bridge:      newCodeBridge(),
@@ -99,6 +99,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.patchTrigger))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/triggers/{tid}", s.inWorkspace("admin", s.deleteTrigger))
 	mux.HandleFunc("POST /api/hooks/{id}", s.webhook)
+	mux.HandleFunc("GET /api/workspaces/{ws}/connectors", s.inWorkspace("member", s.listConnectors))
+	mux.HandleFunc("POST /api/workspaces/{ws}/connectors/mcp", s.inWorkspace("admin", s.createConnector))
+	mux.HandleFunc("POST /api/workspaces/{ws}/connectors/mcp/{id}/refresh", s.inWorkspace("admin", s.refreshConnector))
+	mux.HandleFunc("PUT /api/workspaces/{ws}/connectors/mcp/{id}/tools", s.inWorkspace("admin", s.setConnectorTools))
+	mux.HandleFunc("DELETE /api/workspaces/{ws}/connectors/mcp/{id}", s.inWorkspace("admin", s.deleteConnector))
 	mux.HandleFunc("POST /api/workflow-hooks/{token}", s.incomingHook)
 	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}/automation", s.inWorkspace("member", s.automation))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/{id}/starts", s.inWorkspace("member", s.startNow))
