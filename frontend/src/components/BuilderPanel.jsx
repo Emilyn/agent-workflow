@@ -14,7 +14,7 @@ export default function BuilderPanel({ ints, form, error, onChange, onSave, onCa
         <span className="eyebrow" style={{ fontSize: 11 }}>New agent</span>
         <span className="serif" style={{ fontSize: 28 }}>Create an agent</span>
         <span style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--ink-2)' }}>
-          Describe what it should do. Once saved, it appears in your Agents list, and you can add it to the workflow or mention it in chat.
+          Describe what it should do. Once saved, you can add it from the + between steps or mention it in chat.
         </span>
       </div>
 

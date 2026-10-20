@@ -59,6 +59,7 @@ export const api = {
   claudeStatus: (ws) => request('GET', `${w(ws)}/claude`),
   connectClaude: (ws, apiKey) => request('PUT', `${w(ws)}/claude/key`, { apiKey }),
   disconnectClaude: (ws) => request('DELETE', `${w(ws)}/claude/key`),
+  draftWorkflow: (ws, description) => request('POST', `${w(ws)}/workflows/draft`, { description }),
   setClaudeCodeSettings: (ws, settings) => request('PUT', `${w(ws)}/claude/code`, settings),
   setClaudeMode: (ws, mode) => request('PUT', `${w(ws)}/claude/mode`, { mode }),
   integrations: (ws) => request('GET', `${w(ws)}/integrations`),

@@ -106,6 +106,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("GET /api/workspaces/{ws}/workflows", s.inWorkspace("member", s.listWorkflows))
 	mux.HandleFunc("POST /api/workspaces/{ws}/workflows", s.inWorkspace("member", s.createWorkflow))
+	mux.HandleFunc("POST /api/workspaces/{ws}/workflows/draft", s.inWorkspace("member", s.draftWorkflow))
 	mux.HandleFunc("GET /api/workspaces/{ws}/workflows/{id}", s.inWorkspace("member", s.getWorkflow))
 	mux.HandleFunc("PUT /api/workspaces/{ws}/workflows/{id}", s.inWorkspace("member", s.putWorkflow))
 	mux.HandleFunc("DELETE /api/workspaces/{ws}/workflows/{id}", s.inWorkspace("member", s.deleteWorkflow))

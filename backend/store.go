@@ -199,7 +199,7 @@ func (ws *Workspace) validate() error {
 
 // ---------- starting points ----------
 
-const welcomeText = "Add agents and people from the left. Mention an agent by name here to add your message to its instructions."
+const welcomeText = "Use the + between steps to add agents and people. Mention an agent by name here to add your message to its instructions."
 
 func blankWorkflow() Workflow {
 	return Workflow{

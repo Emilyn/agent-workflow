@@ -402,7 +402,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
       setSelected(n.id);
       setTab('settings');
     } else {
-      note(`${agent.name} is saved. Add it from the Agents list, or mention it with @${agent.name}.`);
+      note(`${agent.name} is saved. Add it with the + between steps, or mention it with @${agent.name}.`);
       setTab('chat');
     }
     setForm(blankForm());
@@ -494,7 +494,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     if (hit && !inFlow) {
       try {
         add([await api.postMessage(wsId, doc.id, { text })]);
-        await note(`${hit.name} is not in this workflow yet. Add it from the Agents list and it will pick this up from there.`);
+        await note(`${hit.name} is not in this workflow yet. Add it with the + between steps and it will pick this up from there.`);
       } catch (e) {
         setError(e.message);
       }
@@ -534,10 +534,18 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
     setMain('new', newHash(wsId));
   };
   const openFromList = (id) => openWorkflow(id).catch((e) => setError(`Could not open that workflow: ${e.message}`));
-  const createWorkflow = async ({ name, template }) => {
+  const createWorkflow = async ({ name, template, draft }) => {
     await flush();
     const body = template === 'copy' ? { name, template: '', copyOf: copySource.id } : { name, template };
-    const wf = await api.createWorkflow(wsId, body);
+    let wf = await api.createWorkflow(wsId, body);
+    if (draft) {
+      // Claude's accepted proposal goes in after the trigger row.
+      const nodes = draft.steps.map((st, i) => (st.kind === 'agent'
+        ? { id: `u${wf.nextId + i}`, kind: 'agent', title: st.title, desc: st.desc, who: 'Claude Sonnet', instruction: st.instruction, tools: st.tools }
+        : { id: `u${wf.nextId + i}`, kind: 'human', title: st.title, desc: st.desc, who: user.name, assignee: user.name, instruction: st.instruction, tools: [] }));
+      const { messages, outputs, ...rest } = wf;
+      wf = { ...wf, ...(await api.saveWorkflow(wsId, wf.id, { ...rest, steps: [wf.steps[0], ...nodes.map((n) => [n])], nextId: wf.nextId + nodes.length, version: wf.version })) };
+    }
     setList(await api.listWorkflows(wsId));
     show(wf, { open: true });
     setTab('chat');
@@ -642,7 +650,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
         />
       )}
       {page === 'new' && (
-        <NewWorkflowPage currentName={copySource?.name || ''} onCreate={createWorkflow} onCancel={goHome} />
+        <NewWorkflowPage currentName={copySource?.name || ''} canDraft={!!claude?.connected} onDraft={(text) => api.draftWorkflow(wsId, text)} onCreate={createWorkflow} onCancel={goHome} />
       )}
       {page === 'settings' ? (
         <SettingsPage
