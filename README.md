@@ -44,6 +44,7 @@ You need Go 1.24+, Node 20+ and a PostgreSQL 16 database.
 cd backend
 export DATABASE_URL='postgres://user:pass@localhost:5432/agentworkflow?sslmode=disable'
 export ALLOW_DEV_SECRET=true      # development only: uses a fixed, insecure encryption key
+set -a; . ../.env; set +a         # optional: the backend does not read .env itself, load it into the shell
 go run .                          # http://localhost:8080, runs the migrations on start
 
 # 2. Frontend with hot reload (terminal 2)
@@ -125,7 +126,7 @@ Things to know:
 ## Connecting tools (GitHub, GitLab, Jira, Figma)
 
 1. Create an OAuth app at the service and set its callback URL to `PUBLIC_URL/api/integrations/<provider>/callback` (`github`, `gitlab`, `jira` or `figma`).
-2. Put its client id and secret in the matching `…_CLIENT_ID` and `…_CLIENT_SECRET`, and set `PUBLIC_URL`. OAuth apps are server settings; they are not editable in the app.
+2. Put its client id and secret in the matching `…_CLIENT_ID` and `…_CLIENT_SECRET`, and set `PUBLIC_URL`. OAuth apps are server settings; they are not editable in the app. Restart the backend after changing them. If you load `.env` into a shell, quote values with spaces, for example `GITHUB_SCOPES="public_repo read:user write:repo_hook"`.
 3. An admin opens **Settings → Integrations** (Settings in the sidebar), chooses **Connect …** and approves on the service's own page. The sign-in is encrypted like the Claude key (bound to the workspace) and never sent to the browser.
 4. Give a step the tool: select the step, then **Step settings → Tools and sources**. When it runs, Claude can call that service's read-only tools, and the step's output lists which were used.
 
