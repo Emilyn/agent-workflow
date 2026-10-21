@@ -14,7 +14,7 @@ function ReadOnlyValue({ label, value }) {
   );
 }
 
-function TriggerCard({ t, workflowName, canManage, onChange, onDelete }) {
+function TriggerCard({ t, canManage, onChange, onDelete, confirming, onKeep }) {
   const host = REVIEW_HOSTS.find((h) => h.id === t.provider);
   const registered = t.hookStatus === 'registered';
   return (
@@ -23,7 +23,6 @@ function TriggerCard({ t, workflowName, canManage, onChange, onDelete }) {
         <div className="col" style={{ minWidth: 0 }}>
           <strong style={{ fontSize: 14, overflowWrap: 'anywhere' }}>{t.project}</strong>
           <span className="small muted">{host.label} · new {host.word}s{t.onPush ? ' and pushes' : ''}</span>
-          <span className="small muted">Starts: {workflowName}</span>
         </div>
         <span className={`pill ${t.enabled ? 'done' : 'queued'}`}>{t.enabled ? 'On' : 'Off'}</span>
       </div>
@@ -52,7 +51,8 @@ function TriggerCard({ t, workflowName, canManage, onChange, onDelete }) {
             <button type="button" className="btn sm" onClick={() => onChange(t.id, { reviewMode: t.reviewMode === 'draft' ? 'post' : 'draft' })}>
               {t.reviewMode === 'draft' ? 'Post directly' : 'Save as drafts'}
             </button>
-            <button type="button" className="btn sm danger" onClick={() => onDelete(t)}>Remove</button>
+            <button type="button" className="btn sm danger" onClick={() => onDelete(t)}>{confirming ? `Stop reviewing ${t.project}` : 'Remove'}</button>
+            {confirming && <button type="button" className="btn sm ghost" onClick={onKeep}>Keep it</button>}
           </div>
         </>
       )}
@@ -60,34 +60,34 @@ function TriggerCard({ t, workflowName, canManage, onChange, onDelete }) {
   );
 }
 
-
-// All review triggers of the workspace, and a form to add one.
-export default function TriggersSection({ wsId, canManage, ints, workflows, currentWorkflowId, onGoIntegrations }) {
+// Starting this workflow on new pull or merge requests, and reviewing one by hand.
+export default function PullRequestStarts({ wsId, wfId, canManage, ints, onGoIntegrations }) {
   const [triggers, setTriggers] = useState([]);
   const [error, setError] = useState('');
-  const [working, setWorking] = useState(false);
+  const [working, setWorking] = useState('');
+  const [confirm, setConfirm] = useState('');
   const connected = REVIEW_HOSTS.filter((h) => ints?.[h.id]?.connected);
-  const [form, setForm] = useState({ provider: 'github', workflowId: currentWorkflowId || '', project: '', reviewMode: 'draft', onPush: false });
+  const [form, setForm] = useState({ provider: 'github', project: '', reviewMode: 'draft', onPush: false });
+  const [manual, setManual] = useState({ provider: 'github', project: '', number: '' });
 
   const load = useCallback(async () => {
     try {
-      setTriggers(await api.triggers(wsId));
+      setTriggers((await api.triggers(wsId)).filter((t) => t.workflowId === wfId));
     } catch (e) {
       if (e.status !== 401) setError(e.message);
     }
-  }, [wsId]);
+  }, [wsId, wfId]);
   useEffect(() => { load(); }, [load]);
 
+  // keep the service choices on something that is connected
   useEffect(() => {
     if (connected.length && !connected.some((h) => h.id === form.provider)) setForm((f) => ({ ...f, provider: connected[0].id }));
+    if (connected.length && !connected.some((h) => h.id === manual.provider)) setManual((m) => ({ ...m, provider: connected[0].id }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ints]);
-  useEffect(() => {
-    if (!form.workflowId && workflows[0]) setForm((f) => ({ ...f, workflowId: currentWorkflowId || workflows[0].id }));
-  }, [workflows, currentWorkflowId, form.workflowId]);
 
-  const guard = (fn) => async (...args) => {
-    setWorking(true);
+  const guard = (name, fn) => async (...args) => {
+    setWorking(name);
     setError('');
     try {
       await fn(...args);
@@ -95,43 +95,45 @@ export default function TriggersSection({ wsId, canManage, ints, workflows, curr
     } catch (e) {
       setError(e.message);
     }
-    setWorking(false);
+    setWorking('');
   };
-  const add = guard(async (e) => {
+  const add = guard('add', async (e) => {
     e.preventDefault();
-    await api.createTrigger(wsId, form);
+    await api.createTrigger(wsId, { ...form, workflowId: wfId });
     setForm((f) => ({ ...f, project: '' }));
   });
-  const change = guard((id, body) => api.patchTrigger(wsId, id, body));
-  const remove = guard(async (t) => {
-    if (window.confirm(`Stop reviewing ${t.project}? The webhook is removed at ${t.provider === 'github' ? 'GitHub' : 'GitLab'} when possible.`)) await api.deleteTrigger(wsId, t.id);
+  const change = guard('change', (id, body) => api.patchTrigger(wsId, id, body));
+  const remove = guard('remove', async (t) => {
+    await api.deleteTrigger(wsId, t.id);
+    setConfirm('');
   });
-  const nameOf = (id) => workflows.find((w) => w.id === id)?.name || 'a workflow';
+  const startManual = guard('manual', async (e) => {
+    e.preventDefault();
+    await api.startRun(wsId, wfId, { provider: manual.provider, project: manual.project, number: Number(manual.number) });
+    setManual((m) => ({ ...m, number: '' }));
+  });
   const hostOf = (id) => REVIEW_HOSTS.find((h) => h.id === id);
 
-  return (
-    <div className="col g16">
-      {error && <span className="alert" role="alert">{error}</span>}
-      {connected.length === 0 && (
-        <div className="empty">
-          <span>Connect GitHub or GitLab first. Then give the reviewing step that tool.</span>
-          <button type="button" className="btn sm" onClick={onGoIntegrations}>Open Integrations</button>
-        </div>
-      )}
-      <div className="sect">
-        {triggers.length === 0 && connected.length > 0 && <div className="empty">No triggers yet.</div>}
-        {triggers.map((t) => <TriggerCard key={t.id} t={t} workflowName={nameOf(t.workflowId)} canManage={canManage} onChange={change} onDelete={remove} />)}
+  if (connected.length === 0 && triggers.length === 0) {
+    return (
+      <div className="empty">
+        <span>Connect GitHub or GitLab to start this workflow on new pull or merge requests, and give its reviewing step that tool.</span>
+        <button type="button" className="btn sm" onClick={onGoIntegrations}>Open Integrations</button>
       </div>
+    );
+  }
+  return (
+    <div className="col g12">
+      {error && <span className="alert" role="alert">{error}</span>}
+      {triggers.map((t) => (
+        <div key={t.id}>
+          <TriggerCard t={t} canManage={canManage} onChange={change} onDelete={(x) => (confirm === x.id ? remove(x) : setConfirm(x.id))} confirming={confirm === t.id} onKeep={() => setConfirm('')} />
+        </div>
+      ))}
       {connected.length > 0 && (canManage ? (
         <details className="disclose" open={triggers.length === 0}>
-          <summary>Add a trigger</summary>
+          <summary>Add a pull or merge request trigger</summary>
           <form className="inner" onSubmit={add} aria-label="Add a trigger">
-            <label className="col g6">
-              <span className="small">Workflow to start</span>
-              <select className="field" style={{ height: 44 }} value={form.workflowId} onChange={(e) => setForm({ ...form, workflowId: e.target.value })}>
-                {workflows.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            </label>
             <label className="col g6">
               <span className="small">Service</span>
               <select className="field" style={{ height: 44 }} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
@@ -153,12 +155,28 @@ export default function TriggersSection({ wsId, canManage, ints, workflows, curr
               <input type="checkbox" checked={form.onPush} onChange={(e) => setForm({ ...form, onPush: e.target.checked })} />
               <span className="small">Review again when new commits are pushed</span>
             </label>
-            <button type="submit" className="btn sm primary" style={{ alignSelf: 'flex-start' }} disabled={working}>{working ? 'Adding…' : 'Add trigger'}</button>
+            <button type="submit" className="btn sm primary" style={{ alignSelf: 'flex-start' }} disabled={working === 'add'}>{working === 'add' ? 'Adding…' : 'Add trigger'}</button>
           </form>
         </details>
       ) : (
         <span className="small muted">Only workspace admins can add triggers.</span>
       ))}
+      {connected.length > 0 && (
+        <details className="disclose">
+          <summary>Review one request now</summary>
+          <form className="inner" onSubmit={startManual} aria-label="Review one now">
+            <div className="row g8">
+              <select className="field" aria-label="Service" style={{ flex: '0 0 110px', height: 44 }} value={manual.provider} onChange={(e) => setManual({ ...manual, provider: e.target.value })}>
+                {connected.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}
+              </select>
+              <input className="field" aria-label="Number" required inputMode="numeric" pattern="[0-9]+" style={{ flex: '0 0 84px', height: 44 }} placeholder="#" value={manual.number} onChange={(e) => setManual({ ...manual, number: e.target.value })} />
+            </div>
+            <input className="field" aria-label="Project" required style={{ height: 44 }} placeholder={hostOf(manual.provider)?.example} value={manual.project} onChange={(e) => setManual({ ...manual, project: e.target.value })} />
+            <button type="submit" className="btn sm primary" style={{ alignSelf: 'flex-start' }} disabled={working === 'manual'}>{working === 'manual' ? 'Starting…' : 'Review it now'}</button>
+            <span className="small muted">Manual runs always save a draft. Find the result on the Runs page.</span>
+          </form>
+        </details>
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@
 //   #/s/<workspace>/runs                   every run, and what is waiting for you
 //   #/s/<workspace>/new                    create a workflow
 //   #/s/<workspace>/w/<workflow>           a workflow
-//   #/s/<workspace>/settings/<section>     workspace settings (claude, integrations, triggers, team)
+//   #/s/<workspace>/settings/<section>     workspace settings (claude, integrations, team)
 //   #/join/<token>                         an invite link
 export function parseHash(hash = window.location.hash) {
   let m = hash.match(/^#\/join\/([\w-]+)$/);

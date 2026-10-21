@@ -798,8 +798,7 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
               setDraft(`About “${n.title}”: `);
             },
           }}
-          automation={{ wsId, wfId: doc.id, canManage, auto: doc.auto, onChanged: refreshInbox }}
-          runs={{ wsId, wfId: doc.id, ints, onGoIntegrations: () => openSettings('integrations'), onManageTriggers: () => openSettings('triggers') }}
+          automation={{ wsId, wfId: doc.id, canManage, auto: doc.auto, ints, onChanged: refreshInbox, onGoIntegrations: () => openSettings('integrations'), onOpenRuns: () => goFromSidebar('runs') }}
           builder={{
             ints,
             form,

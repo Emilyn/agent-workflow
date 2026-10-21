@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { ago } from './HomePage.jsx';
+import PullRequestStarts from './PullRequestStarts.jsx';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const STATUS = { queued: ['queued', 'Waiting its turn'], running: ['running', 'Running'], waiting: ['waiting', 'Waiting for a person'], done: ['done', 'Done'], failed: ['waiting', 'Failed'], skipped: ['queued', 'Skipped'] };
@@ -30,7 +31,7 @@ export function describe(sc) {
 const stamp = (iso) => (iso ? new Date(iso).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 
 // Everything that can start this workflow without someone pressing Run, and what happened to recent starts.
-export default function AutomationPanel({ wsId, wfId, canManage, auto, onChanged }) {
+export default function AutomationPanel({ wsId, wfId, canManage, auto, ints, onChanged, onGoIntegrations, onOpenRuns }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [working, setWorking] = useState('');
@@ -156,7 +157,13 @@ export default function AutomationPanel({ wsId, wfId, canManage, auto, onChanged
       </div>
 
       <div className="sect">
-        <div className="sect-head"><span className="lbl-s">Recent automatic runs</span></div>
+        <div className="sect-head"><span className="lbl-s">Pull and merge requests</span></div>
+        <span className="small muted">Review every new pull request (GitHub) or merge request (GitLab) with this workflow. The agent&rsquo;s review waits for a person to approve it before anything is posted.</span>
+        <PullRequestStarts wsId={wsId} wfId={wfId} canManage={canManage} ints={ints} onGoIntegrations={onGoIntegrations} />
+      </div>
+
+      <div className="sect">
+        <div className="sect-head"><span className="lbl-s">Recent automatic runs</span><button type="button" className="btn sm" onClick={onOpenRuns}>Open Runs</button></div>
         {data.starts.length === 0 ? <div className="empty"><span>Nothing has started on its own yet.</span></div> : data.starts.map((st) => {
           const [pill, label] = STATUS[st.status] || ['queued', st.status];
           return (

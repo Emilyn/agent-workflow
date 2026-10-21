@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
-import { ActionCard } from './RunsPanel.jsx';
+import ReviewDraft from './ReviewDraft.jsx';
 import { REVIEW_HOSTS } from './reviewHosts.js';
 import { ago } from './HomePage.jsx';
 
@@ -217,7 +217,7 @@ function RunDetail({ run, workflowName, busyAction, onApprove, onDiscard, onReru
         {run.actions.map((a) => (
           <li key={a.id}>
             <span className={`tl-dot ${a.status === 'pending' ? 'now' : 'done'}`} aria-hidden="true">{a.status === 'pending' ? '!' : '✓'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}><ActionCard a={a} busy={busyAction === a.id} onApprove={onApprove} onDiscard={onDiscard} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}><ReviewDraft a={a} busy={busyAction === a.id} onApprove={onApprove} onDiscard={onDiscard} /></div>
           </li>
         ))}
       </ol>

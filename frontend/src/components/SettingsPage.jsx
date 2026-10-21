@@ -3,12 +3,10 @@ import ClaudeCard from './ClaudeCard.jsx';
 import ConnectorsSection from './ConnectorsSection.jsx';
 import IntegrationCard from './IntegrationCard.jsx';
 import TeamPanel from './TeamPanel.jsx';
-import TriggersSection from './TriggersSection.jsx';
 
 export const SECTIONS = [
   { id: 'claude', label: 'Claude', hint: 'API key or Claude Code' },
   { id: 'integrations', label: 'Integrations', hint: 'GitHub, GitLab, Jira, Figma, web, MCP' },
-  { id: 'triggers', label: 'Review triggers', hint: 'Start on new pull requests' },
   { id: 'team', label: 'Team', hint: 'Members, invites, workspace' },
 ];
 
@@ -47,12 +45,6 @@ export default function SettingsPage({ section, onSection, onClose, canManage, c
             </div>
             <span className="small muted">Connected tools show up as options when you create an agent or edit a step. Disconnecting removes the stored sign-in.</span>
             <ConnectorsSection connectors={connectors} canManage={canManage} onAdd={onAddMcp} onRefresh={onRefreshMcp} onTools={onMcpTools} onDelete={onDeleteMcp} onSignIn={onSignInMcp} />
-          </>
-        )}
-        {active.id === 'triggers' && (
-          <>
-            <span className="settings-lead">A trigger starts a workflow for every new pull or merge request in one project. By default the review waits in the workflow's Runs tab until a teammate approves it.</span>
-            <TriggersSection wsId={wsId} canManage={canManage} ints={ints} workflows={workflows} currentWorkflowId={currentWorkflowId} onGoIntegrations={() => onSection('integrations')} />
           </>
         )}
         {active.id === 'team' && <TeamPanel me={me} {...team} />}

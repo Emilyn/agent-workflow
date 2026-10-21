@@ -3,7 +3,7 @@
 Build workflows out of AI agents and people, and talk to the team (and the agents) while you build. Teams sign in, share workspaces, and every workspace has its own workflows, chat, agents and Claude API key.
 
 - **Accounts and teams:** email and password sign-up, workspaces with owner / admin / member roles, one-time invite links.
-- **Settings page:** Claude key, tool connections, review triggers and the team live on a page of their own (Settings in the top bar), so the side panel stays for chat, step settings and runs.
+- **Settings page:** Claude key, tool connections and the team live on a page of their own (Settings in the sidebar). Everything that starts a workflow on its own, including pull request reviews, is in the workflow's **Automate** tab.
 - **Multiple workflows** per workspace: create (blank, example or a copy), rename, duplicate, delete. The open one is in the URL.
 - **Canvas:** each step is an agent, a person or a trigger. People steps are assigned to real teammates.
 - **Create agents:** name, role, instructions, tools, model. Add one with a click, or `@mention` it in chat.
@@ -151,7 +151,7 @@ A workflow can start by itself for every new pull request (GitHub) or merge requ
 
 1. Connect the service under **Settings → Integrations** (see above) and set `PUBLIC_URL` to an address the service can reach. On a laptop, use a tunnel (for example `cloudflared tunnel` or `ngrok`) and set `PUBLIC_URL` to its address.
 2. Create a workflow from the **Code review** template, or give any agent step the GitHub or GitLab tool.
-3. Open **Settings → Review triggers** and **Add a trigger**: choose the workflow to start, the service, the project (`owner/repo` or `group/project`), and what happens with the review.
+3. Open the workflow's **Automate** tab, find **Pull and merge requests** and **Add a pull or merge request trigger**: choose the service, the project (`owner/repo` or `group/project`), and what happens with the review.
 4. The app tries to register the webhook itself. If that is refused (for example, the token lacks rights), the trigger shows the payload URL and secret to add by hand: GitHub → Settings → Webhooks (JSON, "Pull requests" events); GitLab → Settings → Webhooks (secret token, "Merge request events").
 5. **Review one request now** in the workflow's **Runs** tab starts a run on any pull or merge request without waiting for a webhook, which is the easiest way to test.
 
@@ -159,7 +159,7 @@ How a run works:
 
 - A background worker picks up queued runs (so a restart or a slow model does not lose them), runs the agent steps in order, and skips steps assigned to a person. Failed runs are retried up to 3 times; a busy Claude is retried after 30 seconds.
 - The agent reads the diff with the diff tool and finishes with the `post_review` tool: a summary plus up to 20 inline comments on changed lines. It cannot choose where to post: the tool is bound to the one pull or merge request that started the run, and works once per run.
-- **Draft mode (default):** the review is saved and a teammate sees it in the workflow's Runs tab, then picks **Approve and post** or **Discard**. **Post mode** (admin choice per trigger) posts straight away. Manual runs always make drafts.
+- **Draft mode (default):** the review is saved and a teammate sees it on the **Runs** page, then picks **Approve and post** or **Discard**. **Post mode** (admin choice per trigger) posts straight away. Manual runs always make drafts.
 - GitHub gets one review with the inline comments. GitLab gets one discussion per inline comment plus a summary note. Comments that cannot be placed on the diff are folded into the summary instead of being lost.
 - Reviews are posted as the account that connected the service, with a footer saying the review is automatic. Use a dedicated bot account for that.
 
@@ -178,7 +178,7 @@ Safety:
 | See runs, start a review on a pull or merge request, approve or discard a draft review | yes | yes | yes |
 | See member names | yes | yes | yes |
 | See member emails, create and revoke invite links for new members | | yes | yes |
-| Connect or remove the Claude API key and the tool connections, add, change or remove review triggers (and see their webhook secret), rename the workspace | | yes | yes |
+| Connect or remove the Claude API key and the tool connections, add, change or remove pull request triggers in a workflow's Automate tab (and see their webhook secret), rename the workspace | | yes | yes |
 | Invite admins, make or change owners, delete the workspace | | | yes |
 
 Anyone can leave a workspace. A workspace always keeps at least one owner. People who aren't in a workspace get a 404 for everything in it.
@@ -248,7 +248,7 @@ The server keeps no state in memory except rate-limit counters, so you can run s
 - **Real, review triggers:** webhooks, durable run queue and worker, diff reading, draft-then-approve reviews, and direct posting, for GitHub and GitLab. Tested against fake services and a scripted Claude, in Go and in the browser. **Not tried against real GitHub or GitLab**, so expect small differences (for example how a position is accepted for an inline comment).
 - **Placeholder, other tools on an agent** (Web search, Docs, Sheets, Slack, Email): recorded but not called.
 - **Not built for the connected tools:** writing other than the review (comments elsewhere, tickets, pull requests), triggers for Jira or Figma, per-repository or per-project limits, choosing among several Jira sites, one connection per user instead of per workspace.
-- **Not built:** password reset, email verification and email delivery, sign-in with Google or SSO, two-factor, audit log, billing, Branch/Parallel/Wait steps, scheduled triggers (the example's "Every Monday" is a label).
+- **Not built:** password reset, email verification and email delivery, sign-in with Google or SSO, two-factor, audit log, billing, Branch/Parallel/Wait steps, a schedule shown on the trigger step card (schedules are set in the Automate tab).
 
 ## Why API keys, and what Claude Code mode changes
 
@@ -260,5 +260,5 @@ The optional Claude Code mode is a different arrangement: this app never touches
 
 1. Write actions with approval (comment on an issue, open a ticket) and more tools such as Slack.
 2. Password reset and email verification (needs an email provider), then SSO.
-3. Real-time updates, scheduled triggers, and webhook triggers for Jira and Figma.
+3. Real-time updates, and event triggers for Jira and Figma.
 4. Move the UI onto shadcn/ui. The init (`npx shadcn@latest init --preset b7PaZOyoUt --template vite`) needs `ui.shadcn.com` to be reachable.
