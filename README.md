@@ -251,11 +251,13 @@ The server keeps no state in memory except rate-limit counters, so you can run s
 - **Not built for the connected tools:** writing other than the review (comments elsewhere, tickets, pull requests), triggers for Jira or Figma, per-repository or per-project limits, choosing among several Jira sites, one connection per user instead of per workspace.
 - **Not built:** password reset, email verification and email delivery, sign-in with Google or SSO, two-factor, audit log, billing, Branch/Parallel/Wait steps, a schedule shown on the trigger step card (schedules are set in the Automate tab).
 
+
 ## Why API keys, and what Claude Code mode changes
 
 A Claude Pro or Max plan covers Claude.ai and is billed separately from the API. Anthropic's terms don't allow third-party apps to offer Claude.ai login or to use Free, Pro or Max credentials on behalf of users ([Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [why the API is billed separately](https://support.claude.com/en/articles/9876003-i-have-a-paid-claude-subscription-pro-max-team-or-enterprise-plans-why-do-i-have-to-pay-separately-to-use-the-claude-api-and-console)). So the app only accepts API keys from the [Claude Console](https://platform.claude.com/), and refuses subscription tokens (`sk-ant-oat…`).
 
 The optional Claude Code mode is a different arrangement: this app never touches a Claude login. It starts the Claude Code that the person running the server installed and signed in themselves, and only that person's own use is covered by their plan. If you host this for other people, use API keys.
+
 
 ## Next steps
 

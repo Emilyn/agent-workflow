@@ -1,8 +1,34 @@
+import { useState } from 'react';
 import { LIVE_TOOLS } from '../workflow.js';
 
 const MODELS = ['Claude Sonnet', 'Claude Opus', 'Claude Haiku'];
 
-export default function BuilderPanel({ ints, form, error, onChange, onSave, onCancel, onGoIntegrations }) {
+export default function BuilderPanel({ ints, form, error, canDraft, onDraft, onChange, onSave, onCancel, onGoIntegrations }) {
+  const [about, setAbout] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const hasText = form.instructions.trim().length >= 10;
+
+  // Claude writes (or rewrites) the form from a sentence; the person reviews every field before saving.
+  const draft = async () => {
+    setBusy(true);
+    setNote('');
+    try {
+      const d = await onDraft(about.trim(), hasText ? form.instructions : '');
+      const known = new Set(tools.filter((t) => !t.id || ints?.[t.id]?.connected).map((t) => t.label));
+      const picked = {};
+      (d.tools || []).forEach((t) => { if (known.has(t)) picked[t] = true; });
+      const skipped = (d.tools || []).filter((t) => !known.has(t));
+      onChange({ name: form.name.trim() || d.name, role: d.role, instructions: d.instruction, model: d.model, tools: picked });
+      setAbout('');
+      setNote(skipped.length ? `Drafted. It also wanted ${skipped.join(', ')}, which isn't connected yet.` : 'Drafted. Read it through and change anything before you save.');
+    } catch (e) {
+      setNote(e.message || 'Could not draft. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const tools = [
     { label: 'Web search' }, { label: 'Docs' }, { label: 'Sheets' }, { label: 'Slack' }, { label: 'Email' },
     ...LIVE_TOOLS.map((t) => ({ label: t.label, id: t.id })),
@@ -16,6 +42,18 @@ export default function BuilderPanel({ ints, form, error, onChange, onSave, onCa
         <span style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--ink-2)' }}>
           Describe what it should do. Once saved, you can add it from the + between steps or mention it in chat.
         </span>
+      </div>
+
+      <div className="col g8">
+        <label className="lbl" htmlFor="agent-about">{hasText ? 'What should change? (optional)' : 'What should this agent do?'}</label>
+        <textarea id="agent-about" className="field" rows={3} placeholder="Turn merged pull requests into short release notes a customer can read." value={about} onChange={(e) => setAbout(e.target.value)} />
+        <div className="row g8" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="btn primary" onClick={draft} disabled={busy || !canDraft || (about.trim().length < 10 && !hasText)}>
+            {busy ? 'Writing…' : hasText ? 'Improve with Claude' : 'Write it with Claude'}
+          </button>
+          <span className="small muted">{canDraft ? 'Claude writes the instructions, picks tools and a model. Nothing is saved until you save.' : 'Connect Claude in Settings to have it written for you.'}</span>
+        </div>
+        {note && <span className="small" role="status">{note}</span>}
       </div>
 
       <div className="col g8">
@@ -38,6 +76,8 @@ export default function BuilderPanel({ ints, form, error, onChange, onSave, onCa
         />
       </div>
 
+      <details className="col g8" open={Object.values(form.tools).some(Boolean) || undefined}>
+      <summary className="lbl" style={{ cursor: 'pointer' }}>Tools and model · {Object.values(form.tools).filter(Boolean).length} tools, {form.model.replace('Claude ', '')}</summary>
       <div className="col g8">
         <span className="lbl">Tools and sources</span>
         <div className="row wrap g8">
@@ -70,6 +110,7 @@ export default function BuilderPanel({ ints, form, error, onChange, onSave, onCa
           ))}
         </div>
       </div>
+      </details>
 
       {error && <span className="alert" role="alert">{error}</span>}
 

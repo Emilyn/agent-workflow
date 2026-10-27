@@ -803,6 +803,8 @@ export default function Workspace({ ws, workspaces, user, wfFromUrl, onSwitchWor
             ints,
             form,
             error: formError,
+            canDraft: !!claude?.connected,
+            onDraft: (description, current) => api.draftAgent(wsId, description, current),
             onChange: (patch) => {
               setForm((f) => ({ ...f, ...patch }));
               setFormError('');
